@@ -8,3 +8,4 @@ dateparser
 openai
 langchain
 langchain_community
+parsedatetime
