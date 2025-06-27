@@ -14,7 +14,7 @@ credentials = service_account.Credentials.from_service_account_info(
 
 service = build('calendar', 'v3', credentials=credentials)
 
-CALENDAR_ID = 'primary'  # Or the specific calendar ID your service account has access to
+CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Or the specific calendar ID your service account has access to
 
 def check_availability(start, end):
     events_result = service.events().list(
