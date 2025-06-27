@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# IDE stuff
+.vscode/
+.idea/
+
+# Secrets
+service_account.json
+token.json
+*.env
+secrets.toml
