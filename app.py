@@ -4,49 +4,38 @@ import pytz
 import json
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
-
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+import parsedatetime
 
 # CONFIG
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 CALENDAR_ID = 'chalasaniajitha@gmail.com'
 
-# GOOGLE SERVICE ACCOUNT
+# SERVICE ACCOUNT
 service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
 credentials = service_account.Credentials.from_service_account_info(
     service_account_info, scopes=SCOPES
 )
 service = build('calendar', 'v3', credentials=credentials)
 
-# LLM SETUP
-llm = ChatOpenAI(
-    api_key=st.secrets["OPENROUTER_API_KEY"],
-    base_url="https://openrouter.ai/api/v1",
-    model_name="mistralai/mistral-7b-instruct"  # Or another free model on OpenRouter
-)
+cal = parsedatetime.Calendar()
 
-# PROMPT TEMPLATE
-prompt_template = ChatPromptTemplate.from_template("""
-You are a smart assistant. The user will describe an event to schedule.
-Extract:
-- summary: A short title for the event
-- datetime: The exact date and time in format YYYY-MM-DD HH:MM (24h)
+# FUNCTIONS
+def parse_datetime(text):
+    time_struct, parse_status = cal.parse(text)
+    if parse_status == 0:
+        return None
+    dt = datetime.datetime(*time_struct[:6])
+    return pytz.timezone('Asia/Kolkata').localize(dt)
 
-User input: {input}
-
-Respond as JSON like: {{"summary": "...", "datetime": "..."}}
-""")
-
-def ask_llm_for_datetime(user_input):
-    prompt = prompt_template.format_messages(input=user_input)
-    response = llm(prompt)
-    text = response.content
-    try:
-        data = json.loads(text)
-        return data["summary"], data["datetime"]
-    except:
-        return None, None
+def detect_summary(text):
+    if "flight" in text.lower():
+        return "Flight"
+    elif "call" in text.lower():
+        return "Call"
+    elif "meeting" in text.lower():
+        return "Meeting"
+    else:
+        return "Scheduled Event"
 
 def check_availability(start, end):
     events_result = service.events().list(
@@ -70,6 +59,7 @@ def create_event(summary, start, end):
 
 # UI
 st.title("📅 Smart Calendar Booking Bot")
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -79,24 +69,18 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     reply = ""
 
-    summary, dt_str = ask_llm_for_datetime(user_input)
+    summary = detect_summary(user_input)
+    dt = parse_datetime(user_input)
 
-    if summary and dt_str:
-        try:
-            dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-            dt = pytz.timezone("Asia/Kolkata").localize(dt)
-            end_dt = dt + datetime.timedelta(minutes=30)
-
-            if check_availability(dt, end_dt):
-                link = create_event(summary, dt, end_dt)
-                reply = f"✅ Booked {summary} for {dt.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
-            else:
-                reply = f"❌ Time slot busy. Please suggest another time."
-
-        except Exception as e:
-            reply = f"⚠ Could not parse LLM response datetime."
+    if dt:
+        end_dt = dt + datetime.timedelta(minutes=30)
+        if check_availability(dt, end_dt):
+            link = create_event(summary, dt, end_dt)
+            reply = f"✅ Booked {summary} for {dt.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
+        else:
+            reply = "❌ Time slot busy. Please suggest another time."
     else:
-        reply = "⚠ Could not extract datetime. Please rephrase your request."
+        reply = "⚠ Could not parse your date/time. Please try a clearer phrase."
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
 
