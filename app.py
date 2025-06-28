@@ -5,7 +5,7 @@ import datetime
 import pytz
 from dateparser.search import search_dates
 
-# --- Google Calendar Setup ---
+# Google Calendar setup
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
 credentials = service_account.Credentials.from_service_account_info(
@@ -46,7 +46,6 @@ def check_availability(start, end):
     ).execute()
     return len(events_result.get('items', [])) == 0
 
-# --- Sidebar: Today's Events ---
 def refresh_sidebar():
     st.sidebar.markdown("## 📌 <span style='color:#4CAF50'>Today's Schedule (IST)</span>", unsafe_allow_html=True)
     todays_events = get_todays_events()
@@ -62,9 +61,7 @@ def refresh_sidebar():
                 unsafe_allow_html=True
             )
 
-refresh_sidebar()
-
-# --- Main ---
+# Main title
 st.markdown("<h1 style='color:#3f51b5;'>💬 Interactive Calendar Booking Bot</h1>", unsafe_allow_html=True)
 
 if "messages" not in st.session_state:
@@ -72,7 +69,9 @@ if "messages" not in st.session_state:
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
 
-# --- Quick Book ---
+refresh_sidebar()
+
+# Quick Book UI
 st.markdown("### <span style='color:#009688'>Quick Book</span>", unsafe_allow_html=True)
 col1, col2, col3, col4 = st.columns(4)
 clicked = None
@@ -97,9 +96,7 @@ if clicked:
         hour = col_t1.selectbox("Hour", list(range(1, 13)))
         minute = col_t2.selectbox("Minute", [0, 15, 30, 45])
         am_pm = col_t3.selectbox("AM/PM", ["AM", "PM"])
-
         manual_time_input = st.text_input("Optional manual time (HH:MM AM/PM)", "")
-
         duration = st.selectbox("Duration (minutes)", [15, 30, 45, 60, 90, 120])
         manual_duration = st.text_input("Optional manual duration (minutes)", "")
 
@@ -115,10 +112,8 @@ if clicked:
                     parsed_time = datetime.time(hour=hour_24, minute=minute)
 
                 duration_val = int(manual_duration) if manual_duration else duration
-
                 start_dt = tz.localize(datetime.datetime.combine(date, parsed_time))
                 end_dt = start_dt + datetime.timedelta(minutes=duration_val)
-
                 summary = custom_name if clicked == "Other" else clicked
 
                 if check_availability(start_dt, end_dt):
@@ -129,11 +124,11 @@ if clicked:
 
                 st.session_state.messages.append({"role": "assistant", "content": msg})
                 st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
-                refresh_sidebar()  # Auto-refresh sidebar to show new event
-            except:
+                refresh_sidebar()
+            except Exception as e:
                 st.error("⚠ Invalid manual time or duration format.")
 
-# --- Chat Input ---
+# Chat input
 user_input = st.chat_input("Ask me to book your meeting...")
 
 if user_input:
@@ -205,7 +200,7 @@ if st.session_state.messages:
         st.session_state.messages.append({"role": "assistant", "content": reply})
         st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
 
-# --- Render chat history ---
+# Render chat history
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
