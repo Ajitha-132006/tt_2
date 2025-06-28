@@ -48,8 +48,8 @@ def check_availability(start, end):
 
 # --- Sidebar: Today's Events ---
 def refresh_sidebar():
-   st.sidebar.markdown("## 📌 <span style='color:#4CAF50'>Today's Schedule (IST)</span>", unsafe_allow_html=True)
-   todays_events = get_todays_events()
+    st.sidebar.markdown("## 📌 <span style='color:#4CAF50'>Today's Schedule (IST)</span>", unsafe_allow_html=True)
+    todays_events = get_todays_events()
     if not todays_events:
         st.sidebar.info("No events scheduled today.")
     else:
