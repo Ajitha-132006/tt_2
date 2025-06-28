@@ -46,18 +46,30 @@ def check_availability(start, end):
     ).execute()
     return len(events_result.get('items', [])) == 0
 
-# Sidebar
-st.sidebar.title("📌 Today's Schedule (IST)")
-todays_events = get_todays_events()
-if not todays_events:
-    st.sidebar.info("No events scheduled today.")
-else:
-    for e in todays_events:
-        start = e['start'].get('dateTime', e['start'].get('date'))
-        start_dt = datetime.datetime.fromisoformat(start).astimezone(pytz.timezone('Asia/Kolkata'))
-        st.sidebar.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
+def refresh_sidebar():
+    sidebar = st.sidebar.empty()
+    with sidebar:
+        st.title("📌 Today's Schedule (IST)")
+        todays_events = get_todays_events()
+        if not todays_events:
+            st.info("No events scheduled today.")
+        else:
+            for e in todays_events:
+                start = e['start'].get('dateTime', e['start'].get('date'))
+                start_dt = datetime.datetime.fromisoformat(start).astimezone(pytz.timezone('Asia/Kolkata'))
+                st.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
-# Main
+# --- Initial sidebar render ---
+refresh_sidebar()
+
+# --- Main UI ---
+st.markdown("""
+<style>
+.stButton > button { background-color: #4CAF50; color: white; font-weight: bold; }
+.stChatMessage { background-color: #f1f1f1; padding: 8px; border-radius: 10px; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("💬 Interactive Calendar Booking Bot")
 
 if "messages" not in st.session_state:
@@ -65,7 +77,6 @@ if "messages" not in st.session_state:
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
 
-# --- BUTTONS + FORM ---
 st.markdown("### Quick Book")
 col1, col2, col3, col4 = st.columns(4)
 clicked = None
@@ -85,33 +96,50 @@ if clicked:
         custom_name = ""
         if clicked == "Other":
             custom_name = st.text_input("Enter event name")
+
         date = st.date_input("Pick date", datetime.date.today())
-        time = st.time_input("Pick start time", datetime.datetime.now().time())
+        manual_time = st.checkbox("Enter time manually")
+
+        if manual_time:
+            time_input = st.text_input("Enter time (e.g. 3:30 PM)")
+        else:
+            time_val = st.time_input("Pick start time", datetime.datetime.now().time())
+
         duration = st.number_input("Duration (minutes)", min_value=15, max_value=240, value=30, step=15)
         submit = st.form_submit_button("Book Now")
 
         if submit:
             tz = pytz.timezone('Asia/Kolkata')
-            start_dt = tz.localize(datetime.datetime.combine(date, time))
+            if manual_time:
+                try:
+                    parsed_time = datetime.datetime.strptime(time_input.strip(), "%I:%M %p").time()
+                    time_val = parsed_time
+                except:
+                    st.error("❌ Invalid time format. Use e.g. 3:30 PM")
+                    st.stop()
+
+            start_dt = tz.localize(datetime.datetime.combine(date, time_val))
             end_dt = start_dt + datetime.timedelta(minutes=duration)
             summary = custom_name if clicked == "Other" else clicked
 
             if check_availability(start_dt, end_dt):
                 link = create_event(summary, start_dt, end_dt)
-                msg = f"✅ **{summary} booked on {start_dt.strftime('%Y-%m-%d %I:%M %p')} IST** [👉 View here]({link})"
+                msg = f"✅ **{summary} booked** — [👉 View here]({link})"
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                st.chat_message("assistant").markdown(msg)
+                refresh_sidebar()
             else:
                 msg = f"❌ {summary} time slot is busy. Please try a different time."
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                st.chat_message("assistant").markdown(msg)
 
-            st.session_state.messages.append({"role": "assistant", "content": msg})
-            st.chat_message("assistant").markdown(msg)
-
-# --- CHAT FLOW ---
+# --- Chat input ---
 user_input = st.chat_input("Ask me to book your meeting...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-# Process chat
+# --- Chat processing ---
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
@@ -124,15 +152,15 @@ if st.session_state.messages:
             end = start + datetime.timedelta(minutes=30)
             summary = pending.get("summary", "Scheduled Event")
             link = create_event(summary, start, end)
-            reply = f"✅ **{summary} booked on {start.strftime('%Y-%m-%d %I:%M %p')} IST** [👉 View here]({link})"
+            reply = f"✅ **{summary} booked** — [👉 View here]({link})"
             st.session_state.pending_suggestion = {}
+            refresh_sidebar()
 
         elif msg in ["no", "reject"]:
             reply = "❌ Okay, suggest a different time."
             st.session_state.pending_suggestion = {}
 
         else:
-            # Determine summary
             if "flight" in msg:
                 summary = "Flight"
             elif "call" in msg:
@@ -162,7 +190,8 @@ if st.session_state.messages:
 
                 if check_availability(parsed, end):
                     link = create_event(summary, parsed, end)
-                    reply = f"✅ **{summary} booked on {parsed.strftime('%Y-%m-%d %I:%M %p')} IST** [👉 View here]({link})"
+                    reply = f"✅ **{summary} booked** — [👉 View here]({link})"
+                    refresh_sidebar()
                 else:
                     for i in range(1, 4):
                         alt_start = parsed + datetime.timedelta(hours=i)
@@ -176,7 +205,7 @@ if st.session_state.messages:
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# Render chat
+# --- Render chat history ---
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
