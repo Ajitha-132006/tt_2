@@ -70,8 +70,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- State ---
-if "quickbox_open" not in st.session_state:
-    st.session_state.quickbox_open = False
 if "clicked_type" not in st.session_state:
     st.session_state.clicked_type = None
 if "latest_event" not in st.session_state:
@@ -87,56 +85,46 @@ refresh_sidebar()
 # --- Main ---
 st.title("💬 Interactive Calendar Booking Bot")
 
-toggle_label = "🔽 Quick Book (open)" if st.session_state.quickbox_open else "▶ Quick Book (closed)"
-if st.button(toggle_label):
-    st.session_state.quickbox_open = not st.session_state.quickbox_open
-    st.session_state.clicked_type = None
-    st.stop()
+# Show 4 options directly
+col1, col2, col3, col4 = st.columns(4)
+if col1.button("📞 Call"):
+    st.session_state.clicked_type = "Call"
+if col2.button("📅 Meeting"):
+    st.session_state.clicked_type = "Meeting"
+if col3.button("✈ Flight"):
+    st.session_state.clicked_type = "Flight"
+if col4.button("📝 Other"):
+    st.session_state.clicked_type = "Other"
 
-if st.session_state.quickbox_open:
-    if st.session_state.clicked_type is None:
-        col1, col2, col3, col4 = st.columns(4)
-        if col1.button("📞 Call"):
-            st.session_state.clicked_type = "Call"
-            st.stop()
-        if col2.button("📅 Meeting"):
-            st.session_state.clicked_type = "Meeting"
-            st.stop()
-        if col3.button("✈ Flight"):
-            st.session_state.clicked_type = "Flight"
-            st.stop()
-        if col4.button("📝 Other"):
-            st.session_state.clicked_type = "Other"
-            st.stop()
-    else:
-        clicked = st.session_state.clicked_type
-        st.markdown(f"#### Book: {clicked}")
-        custom_name = ""
-        if clicked == "Other":
-            custom_name = st.text_input("Enter event name")
+if st.session_state.clicked_type:
+    clicked = st.session_state.clicked_type
+    st.markdown(f"#### Book: {clicked}")
+    custom_name = ""
+    if clicked == "Other":
+        custom_name = st.text_input("Enter event name")
 
-        date = st.date_input("Pick date", datetime.date.today())
-        hour = st.selectbox("Hour", list(range(1, 13)))
-        minute = st.selectbox("Minute", list(range(0, 60)))
-        am_pm = st.selectbox("AM/PM", ["AM", "PM"])
-        duration = st.selectbox("Duration (min)", list(range(15, 241, 15)))
+    date = st.date_input("Pick date", datetime.date.today())
+    hour = st.selectbox("Hour", list(range(1, 13)))
+    minute = st.selectbox("Minute", list(range(0, 60)))
+    am_pm = st.selectbox("AM/PM", ["AM", "PM"])
+    duration = st.selectbox("Duration (min)", list(range(15, 241, 15)))
 
-        with st.form(f"{clicked}_form"):
-            submit = st.form_submit_button("✅ Book Now")
-            if submit:
-                tz = pytz.timezone('Asia/Kolkata')
-                hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
-                time_val = datetime.time(hr24, minute)
-                start_dt = tz.localize(datetime.datetime.combine(date, time_val))
-                end_dt = start_dt + datetime.timedelta(minutes=duration)
-                summary = custom_name if clicked == "Other" else clicked
+    with st.form(f"{clicked}_form"):
+        submit = st.form_submit_button("✅ Book Now")
+        if submit:
+            tz = pytz.timezone('Asia/Kolkata')
+            hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
+            time_val = datetime.time(hr24, minute)
+            start_dt = tz.localize(datetime.datetime.combine(date, time_val))
+            end_dt = start_dt + datetime.timedelta(minutes=duration)
+            summary = custom_name if clicked == "Other" else clicked
 
-                if check_availability(start_dt, end_dt):
-                    link = create_event(summary, start_dt, end_dt)
-                    st.chat_message("assistant").markdown(f"✅ **{summary} booked** — [👉 View here]({link})")
-                    refresh_sidebar()
-                else:
-                    st.chat_message("assistant").markdown(f"❌ {summary} time slot is busy. Try a different time.")
+            if check_availability(start_dt, end_dt):
+                link = create_event(summary, start_dt, end_dt)
+                st.chat_message("assistant").markdown(f"✅ **{summary} booked** — [👉 View here]({link})")
+                refresh_sidebar()
+            else:
+                st.chat_message("assistant").markdown(f"❌ {summary} time slot is busy. Try a different time.")
 
 # --- Chat input ---
 user_input = st.chat_input("Ask me to book your meeting...")
