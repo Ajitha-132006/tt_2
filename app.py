@@ -35,7 +35,7 @@ def run_oauth_flow():
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRET_JSON,
         scopes=SCOPES,
-        redirect_uri=st.experimental_get_url()
+        redirect_uri="https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
     )
     auth_url, _ = flow.authorization_url(prompt='consent')
     st.session_state.flow = flow
@@ -114,7 +114,7 @@ st.markdown("""
 st.title("💬 Calendar Booking Bot")
 
 # --- Handle OAuth ---
-query_params = st.experimental_get_query_params()
+query_params = st.query_params
 if 'code' in query_params and st.session_state.credentials is None:
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRET_JSON,
