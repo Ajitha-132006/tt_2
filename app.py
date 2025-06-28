@@ -21,6 +21,16 @@ def create_event(summary, start_dt, end_dt):
     created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
     return created_event.get('htmlLink')
 
+def check_availability(start, end):
+    events_result = service.events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+    return len(events_result.get('items', [])) == 0
+
 def get_events_in_range(start, end):
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
@@ -35,19 +45,33 @@ def refresh_sidebar():
     tz = pytz.timezone('Asia/Kolkata')
     now = datetime.datetime.now(tz)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_range = today_start + datetime.timedelta(days=3)
+    tomorrow_start = today_start + datetime.timedelta(days=1)
+    day_after_start = tomorrow_start + datetime.timedelta(days=1)
 
-    events = get_events_in_range(today_start, end_range)
+    today_events = get_events_in_range(today_start, tomorrow_start)
+    tomorrow_events = get_events_in_range(tomorrow_start, day_after_start)
 
-    st.sidebar.title("📌 Today's Events + Next 2 Days")
-    if not events:
-        st.sidebar.info("No events scheduled.")
+    st.sidebar.title("📌 Calendar Schedule")
+
+    st.sidebar.subheader("Today's Events")
+    if not today_events:
+        st.sidebar.info("No events today.")
     else:
-        for e in events:
+        for e in today_events:
             start = e['start'].get('dateTime', e['start'].get('date'))
             start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
-            label = start_dt.strftime('%Y-%m-%d %I:%M %p')
-            st.sidebar.write(f"✅ **{e['summary']}** at {label}")
+            st.sidebar.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
+
+    st.sidebar.markdown("<hr style='border: 1px solid #ccc;'>", unsafe_allow_html=True)
+
+    st.sidebar.subheader("Tomorrow's Events")
+    if not tomorrow_events:
+        st.sidebar.info("No events tomorrow.")
+    else:
+        for e in tomorrow_events:
+            start = e['start'].get('dateTime', e['start'].get('date'))
+            start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
+            st.sidebar.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
 # Initial state
 if "clicked_type" not in st.session_state:
@@ -59,7 +83,6 @@ if "last_booking_msg" not in st.session_state:
 
 refresh_sidebar()
 
-# Styling
 st.markdown("""
 <style>
 .stButton > button { background-color: #007acc; color: white; font-weight: bold; border-radius: 6px; }
@@ -98,46 +121,10 @@ if st.session_state.quickbox_open:
 
         date = st.date_input("Pick date", datetime.date.today())
 
-        if f"time_{clicked}" not in st.session_state:
-            st.session_state[f"time_{clicked}"] = datetime.datetime.now().replace(second=0, microsecond=0).time()
-        if f"duration_{clicked}" not in st.session_state:
-            st.session_state[f"duration_{clicked}"] = 30
-
-        # Time controls
-        col_hr, col_min, col_ampm = st.columns(3)
-        hour = col_hr.selectbox("Hour", list(range(1, 13)), index=(st.session_state[f"time_{clicked}"].hour % 12) - 1)
-        minute = col_min.selectbox("Minute", list(range(0, 60)), index=st.session_state[f"time_{clicked}"].minute)
-        am_pm = col_ampm.selectbox("AM/PM", ["AM", "PM"], index=0 if st.session_state[f"time_{clicked}"].hour < 12 else 1)
-
-        col_time1, col_time2 = st.columns(2)
-        with col_time1:
-            if st.button("−1 min"):
-                dt_comb = datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"])
-                dt_comb = (dt_comb - datetime.timedelta(minutes=1)).time()
-                st.session_state[f"time_{clicked}"] = dt_comb
-        with col_time2:
-            if st.button("+1 min"):
-                dt_comb = datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"])
-                dt_comb = (dt_comb + datetime.timedelta(minutes=1)).time()
-                st.session_state[f"time_{clicked}"] = dt_comb
-
-        hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
-        st.session_state[f"time_{clicked}"] = datetime.time(hr24, minute)
-
-        duration = st.selectbox("Duration (min)", list(range(15, 241, 15)),
-                                index=(st.session_state[f"duration_{clicked}"] // 15) - 1)
-
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            if st.button("− duration"):
-                if st.session_state[f"duration_{clicked}"] > 15:
-                    st.session_state[f"duration_{clicked}"] -= 1
-        with col_d2:
-            if st.button("+ duration"):
-                if st.session_state[f"duration_{clicked}"] < 240:
-                    st.session_state[f"duration_{clicked}"] += 1
-
-        st.session_state[f"duration_{clicked}"] = duration
+        hour = st.selectbox("Hour", list(range(1, 13)))
+        minute = st.selectbox("Minute", list(range(0, 60)))
+        am_pm = st.selectbox("AM/PM", ["AM", "PM"])
+        duration = st.selectbox("Duration (min)", list(range(15, 241, 15)))
 
         with st.form(f"{clicked}_form"):
             st.write("✅ Confirm above settings and click below to book:")
@@ -145,8 +132,10 @@ if st.session_state.quickbox_open:
 
             if submit:
                 tz = pytz.timezone('Asia/Kolkata')
-                start_dt = tz.localize(datetime.datetime.combine(date, st.session_state[f"time_{clicked}"]))
-                end_dt = start_dt + datetime.timedelta(minutes=st.session_state[f"duration_{clicked}"])
+                hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
+                time_val = datetime.time(hr24, minute)
+                start_dt = tz.localize(datetime.datetime.combine(date, time_val))
+                end_dt = start_dt + datetime.timedelta(minutes=duration)
                 summary = custom_name if clicked == "Other" else clicked
 
                 if check_availability(start_dt, end_dt):
@@ -160,16 +149,17 @@ if st.session_state.quickbox_open:
 if st.session_state.last_booking_msg:
     st.chat_message("assistant").markdown(st.session_state.last_booking_msg)
 
-# Chat part unchanged
-user_input = st.chat_input("Ask me to book your meeting...")
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
+# Chat input
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
 
+user_input = st.chat_input("Ask me to book your meeting...")
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+# Chat logic
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
@@ -233,6 +223,7 @@ if st.session_state.messages:
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
+# Render chat history
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
