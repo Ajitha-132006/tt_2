@@ -92,52 +92,6 @@ if "pending_suggestion" not in st.session_state:
 
 refresh_sidebar()
 
-# QUICK BOOKING
-st.markdown("### Quick Book")
-col1, col2, col3, col4 = st.columns(4)
-clicked = None
-if col1.button("📞 Call"):
-    clicked = "Call"
-if col2.button("📅 Meeting"):
-    clicked = "Meeting"
-if col3.button("✈ Flight"):
-    clicked = "Flight"
-if col4.button("📝 Other"):
-    clicked = "Other"
-
-if clicked:
-    with st.form(f"{clicked}_form"):
-        st.markdown(f"#### Booking: {clicked}")
-        custom_name = ""
-        if clicked == "Other":
-            custom_name = st.text_input("Enter event name")
-        date = st.date_input("Pick date", datetime.date.today())
-        col_t1, col_t2, col_t3 = st.columns([3,2,2])
-        hour = col_t1.selectbox("Hour", list(range(1, 13)))
-        minute = col_t2.selectbox("Minute", [0, 15, 30, 45])
-        am_pm = col_t3.selectbox("AM/PM", ["AM", "PM"])
-        duration = st.selectbox("Duration (minutes)", [15,30,45,60,90,120])
-        submit = st.form_submit_button("✅ Book Now")
-
-        if submit:
-            hour_24 = hour % 12 + (12 if am_pm == "PM" else 0)
-            time_obj = datetime.time(hour_24, minute)
-            tz = pytz.timezone('Asia/Kolkata')
-            start_dt = tz.localize(datetime.datetime.combine(date, time_obj))
-            end_dt = start_dt + datetime.timedelta(minutes=duration)
-            summary = custom_name if clicked == "Other" else clicked
-
-            if check_availability(start_dt, end_dt):
-                link = create_event(summary, start_dt, end_dt)
-                msg = f"✅ <b>{summary}</b> booked for {start_dt.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
-                st.session_state.messages.append({"role":"assistant","content":msg})
-                st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
-                refresh_sidebar()
-            else:
-                msg = f"❌ {summary} time slot is busy. Try another time."
-                st.session_state.messages.append({"role":"assistant","content":msg})
-                st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
-
 # CHAT INTERFACE
 user_input = st.chat_input("Ask me to book your meeting...")
 if user_input:
