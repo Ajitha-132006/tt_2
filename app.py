@@ -4,21 +4,22 @@ import pytz
 from dateparser.search import search_dates
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-import os
 import json
 
 # --- CONFIG ---
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+REDIRECT_URI = "https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
+
+# Load client secret from Streamlit secrets
 client_secret_json = json.loads(st.secrets["CLIENT_SECRET_JSON"])
 
-# Save to temp file so google-auth can use it
+# Save to temp file (required by google-auth)
 with open("client_secret.json", "w") as f:
     json.dump(client_secret_json, f)
 
 CLIENT_SECRET_JSON = "client_secret.json"
 
-# --- Initialize session ---
+# --- Initialize session state ---
 if "credentials" not in st.session_state:
     st.session_state.credentials = None
 if "clicked_type" not in st.session_state:
@@ -30,29 +31,26 @@ if "messages" not in st.session_state:
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
 
-# --- Helper: OAuth flow ---
+# --- OAuth helpers ---
 def run_oauth_flow():
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRET_JSON,
         scopes=SCOPES,
-        redirect_uri="https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
+        redirect_uri=REDIRECT_URI
     )
     auth_url, _ = flow.authorization_url(prompt='consent')
     st.session_state.flow = flow
-    st.write("Please authorize:")
+    st.write("Please authorize to proceed:")
     st.markdown(f"[Click here to login with Google]({auth_url})")
 
 def fetch_token_from_code(flow, code):
     flow.fetch_token(code=code)
     return flow.credentials
 
-# --- Helper: Build service ---
 def build_calendar_service():
-    creds = st.session_state.credentials
-    service = build('calendar', 'v3', credentials=creds)
-    return service
+    return build('calendar', 'v3', credentials=st.session_state.credentials)
 
-# --- Helper: Create event ---
+# --- Event helpers ---
 def create_event(service, summary, start_dt, end_dt):
     event = {
         'summary': summary,
@@ -77,10 +75,8 @@ def check_availability(service, start, end):
     ).execute()
     return len(events_result.get('items', [])) == 0
 
-# --- Sidebar ---
 def refresh_sidebar():
     with st.sidebar:
-        st.empty()
         st.title("📌 Latest Booking")
         event = st.session_state.latest_event
         if event:
@@ -110,22 +106,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Main ---
+# --- Main app ---
 st.title("💬 Calendar Booking Bot")
 
-# --- Handle OAuth ---
+# --- OAuth handler ---
 query_params = st.query_params
 if 'code' in query_params and st.session_state.credentials is None:
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRET_JSON,
         scopes=SCOPES,
-        redirect_uri="https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
+        redirect_uri=REDIRECT_URI
     )
     code = query_params['code'][0]
-    creds = fetch_token_from_code(flow, code)
-    st.session_state.credentials = creds
-    st.success("✅ Logged in successfully! You can now book events.")
-    st.experimental_rerun()
+    try:
+        creds = fetch_token_from_code(flow, code)
+        st.session_state.credentials = creds
+        st.success("✅ Logged in successfully!")
+        st.experimental_rerun()
+    except Exception as e:
+        st.error(f"OAuth failed: {e}")
+        run_oauth_flow()
+        st.stop()
 
 if st.session_state.credentials is None:
     run_oauth_flow()
@@ -137,7 +138,7 @@ service = build_calendar_service()
 # --- Sidebar ---
 refresh_sidebar()
 
-# --- Booking UI ---
+# --- Booking UI buttons ---
 col1, col2, col3, col4 = st.columns(4)
 if col1.button("📞 Call"):
     st.session_state.clicked_type = "Call"
@@ -148,6 +149,7 @@ if col3.button("✈ Flight"):
 if col4.button("📝 Other"):
     st.session_state.clicked_type = "Other"
 
+# --- Manual booking form ---
 if st.session_state.clicked_type:
     clicked = st.session_state.clicked_type
     st.markdown(f"#### Book: {clicked}")
@@ -178,7 +180,7 @@ if st.session_state.clicked_type:
             else:
                 st.chat_message("assistant").markdown(f"❌ {summary} time slot is busy. Try a different time.")
 
-# --- Chat input ---
+# --- Chat booking ---
 user_input = st.chat_input("Ask me to book your meeting...")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
