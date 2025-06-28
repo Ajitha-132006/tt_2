@@ -65,11 +65,10 @@ if "messages" not in st.session_state:
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
 
-# --- BUTTONS + FORM ---
+# Quick Book Buttons
 st.markdown("### Quick Book")
 col1, col2, col3, col4 = st.columns(4)
 clicked = None
-
 if col1.button("📞 Call"):
     clicked = "Call"
 if col2.button("📅 Meeting"):
@@ -85,14 +84,39 @@ if clicked:
         custom_name = ""
         if clicked == "Other":
             custom_name = st.text_input("Enter event name")
+
         date = st.date_input("Pick date", datetime.date.today())
-        time = st.time_input("Pick start time", datetime.datetime.now().time())
-        duration = st.number_input("Duration (minutes)", min_value=15, max_value=240, value=30, step=15)
+
+        col_t1, col_t2, col_t3 = st.columns([3,2,2])
+        hour = col_t1.selectbox("Hour", list(range(1,13)))
+        minute = col_t2.selectbox("Minute", [0, 15, 30, 45])
+        am_pm = col_t3.selectbox("AM/PM", ["AM", "PM"])
+
+        manual_time = st.checkbox("Manually enter time (HH:MM AM/PM)")
+        manual_time_input = ""
+        if manual_time:
+            manual_time_input = st.text_input("Enter time manually (e.g. 7:13 PM)")
+
+        duration = st.selectbox("Duration (minutes)", [15, 30, 45, 60, 90, 120])
+        manual_duration = st.checkbox("Manually enter duration")
+        if manual_duration:
+            duration = st.number_input("Enter duration (minutes)", min_value=1, max_value=480, value=duration)
+
         submit = st.form_submit_button("Book Now")
 
         if submit:
             tz = pytz.timezone('Asia/Kolkata')
-            start_dt = tz.localize(datetime.datetime.combine(date, time))
+            if manual_time and manual_time_input:
+                try:
+                    parsed_time = datetime.datetime.strptime(manual_time_input, "%I:%M %p").time()
+                except:
+                    st.error("Invalid time format. Use HH:MM AM/PM.")
+                    st.stop()
+            else:
+                hour_24 = hour % 12 + (12 if am_pm == "PM" else 0)
+                parsed_time = datetime.time(hour=hour_24, minute=minute)
+
+            start_dt = tz.localize(datetime.datetime.combine(date, parsed_time))
             end_dt = start_dt + datetime.timedelta(minutes=duration)
             summary = custom_name if clicked == "Other" else clicked
 
@@ -105,13 +129,12 @@ if clicked:
             st.session_state.messages.append({"role": "assistant", "content": msg})
             st.chat_message("assistant").markdown(msg)
 
-# --- CHAT FLOW ---
+# Chat Input
 user_input = st.chat_input("Ask me to book your meeting...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-# Process chat
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
@@ -132,7 +155,6 @@ if st.session_state.messages:
             st.session_state.pending_suggestion = {}
 
         else:
-            # Determine summary
             if "flight" in msg:
                 summary = "Flight"
             elif "call" in msg:
@@ -175,8 +197,9 @@ if st.session_state.messages:
                         reply = "❌ Busy at requested time and no nearby slots found."
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.chat_message("assistant").markdown(reply)
 
-# Render chat
+# Render chat history
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
