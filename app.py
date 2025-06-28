@@ -115,24 +115,29 @@ refresh_sidebar()
 # --- Main UI ---
 st.title("💬 Interactive Calendar Booking Bot")
 
-# Quick Box toggle
+# Toggle button
 toggle_label = "🔽 Quick Book (open)" if st.session_state.quickbox_open else "▶ Quick Book (closed)"
 if st.button(toggle_label):
     st.session_state.quickbox_open = not st.session_state.quickbox_open
     st.session_state.clicked_type = None
+    st.stop()  # Ensure clean re-render on toggle
 
-# Quick Box content
+# Quick Box
 if st.session_state.quickbox_open:
     if st.session_state.clicked_type is None:
         col1, col2, col3, col4 = st.columns(4)
         if col1.button("📞 Call"):
             st.session_state.clicked_type = "Call"
+            st.stop()
         if col2.button("📅 Meeting"):
             st.session_state.clicked_type = "Meeting"
+            st.stop()
         if col3.button("✈ Flight"):
             st.session_state.clicked_type = "Flight"
+            st.stop()
         if col4.button("📝 Other"):
             st.session_state.clicked_type = "Other"
+            st.stop()
     else:
         clicked = st.session_state.clicked_type
         st.markdown(f"#### Book: {clicked}")
@@ -163,16 +168,15 @@ if st.session_state.quickbox_open:
                 else:
                     st.session_state.last_booking_msg = f"❌ {summary} time slot is busy. Try a different time."
 
-# Show last booking result
+# Show booking result
 if st.session_state.last_booking_msg:
     st.chat_message("assistant").markdown(st.session_state.last_booking_msg)
 
-# --- Chat input ---
+# Chat input + processing
 user_input = st.chat_input("Ask me to book your meeting...")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-# Chat processing
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
@@ -236,7 +240,6 @@ if st.session_state.messages:
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# Render chat history
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
