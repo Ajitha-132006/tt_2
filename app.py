@@ -2,7 +2,6 @@ import streamlit as st
 import datetime
 import pytz
 import json
-import os
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -10,7 +9,7 @@ from dateparser.search import search_dates
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-# Auth handling
+# AUTH HANDLER
 def get_credentials():
     creds = None
     if "token_info" in st.session_state:
@@ -18,14 +17,15 @@ def get_credentials():
     else:
         client_config = json.loads(st.secrets["CLIENT_SECRET_JSON"])
         flow = Flow.from_client_config(client_config, SCOPES)
-        flow.redirect_uri = st.experimental_get_query_params().get("redirect_uri", [st.request.url])[0]
+        flow.redirect_uri = "https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
 
-        if "code" not in st.experimental_get_query_params():
+        params = st.experimental_get_query_params()
+        if "code" not in params:
             auth_url, _ = flow.authorization_url(prompt='consent')
-            st.write(f"[Click here to authorize Google Calendar access]({auth_url})")
+            st.markdown(f"[👉 Click here to authorize Google Calendar access]({auth_url})")
             st.stop()
         else:
-            code = st.experimental_get_query_params()["code"][0]
+            code = params["code"][0]
             flow.fetch_token(code=code)
             creds = flow.credentials
             st.session_state["token_info"] = json.loads(creds.to_json())
@@ -35,7 +35,7 @@ def get_credentials():
 creds = get_credentials()
 service = build("calendar", "v3", credentials=creds)
 
-# Helpers
+# HELPERS
 def create_event(summary, start_dt, end_dt):
     event = {
         'summary': summary,
@@ -63,8 +63,7 @@ def check_availability(start, end):
         calendarId='primary',
         timeMin=start.isoformat(),
         timeMax=end.isoformat(),
-        singleEvents=True,
-        orderBy='startTime'
+        singleEvents=True
     ).execute().get('items', [])
     return len(events) == 0
 
@@ -83,7 +82,7 @@ def refresh_sidebar():
                 unsafe_allow_html=True
             )
 
-# UI
+# UI HEADER
 st.markdown("<h1 style='color:#3f51b5;'>💬 Interactive Calendar Booking Bot</h1>", unsafe_allow_html=True)
 
 if "messages" not in st.session_state:
@@ -93,7 +92,7 @@ if "pending_suggestion" not in st.session_state:
 
 refresh_sidebar()
 
-# Quick Book
+# QUICK BOOKING
 st.markdown("### Quick Book")
 col1, col2, col3, col4 = st.columns(4)
 clicked = None
@@ -138,7 +137,7 @@ if clicked:
             st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
             refresh_sidebar()
 
-# Chat
+# CHAT INTERFACE
 user_input = st.chat_input("Ask me to book your meeting...")
 if user_input:
     st.session_state.messages.append({"role":"user","content":user_input})
@@ -209,7 +208,7 @@ if st.session_state.messages:
         st.session_state.messages.append({"role":"assistant","content":reply})
         st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
 
-# Render history
+# SHOW HISTORY
 for m in st.session_state.messages:
     if m["role"]=="user":
         st.chat_message("user").write(m["content"])
