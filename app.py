@@ -59,7 +59,6 @@ def refresh_sidebar():
 
 refresh_sidebar()
 
-# --- Custom CSS ---
 st.markdown("""
 <style>
 .stButton > button { background-color: #007acc; color: white; font-weight: bold; border-radius: 6px; }
@@ -89,46 +88,48 @@ if col4.button("📝 Other"):
     clicked = "Other"
 
 if clicked:
+    st.markdown(f"#### Book: {clicked}")
+    custom_name = ""
+    if clicked == "Other":
+        custom_name = st.text_input("Enter event name")
+
+    date = st.date_input("Pick date", datetime.date.today())
+
+    # Manage time & duration state
+    if f"time_{clicked}" not in st.session_state:
+        st.session_state[f"time_{clicked}"] = datetime.datetime.now().replace(second=0, microsecond=0).time()
+    if f"duration_{clicked}" not in st.session_state:
+        st.session_state[f"duration_{clicked}"] = 30
+
+    col_time1, col_time2, col_time3 = st.columns([1, 2, 1])
+    with col_time1:
+        if st.button("−1 min", key=f"minus_time_{clicked}"):
+            new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
+                        - datetime.timedelta(minutes=1)).time()
+            st.session_state[f"time_{clicked}"] = new_time
+    with col_time2:
+        st.write(st.session_state[f"time_{clicked}"].strftime("%I:%M %p"))
+    with col_time3:
+        if st.button("+1 min", key=f"plus_time_{clicked}"):
+            new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
+                        + datetime.timedelta(minutes=1)).time()
+            st.session_state[f"time_{clicked}"] = new_time
+
+    col_dur1, col_dur2, col_dur3 = st.columns([1, 2, 1])
+    with col_dur1:
+        if st.button("−", key=f"minus_dur_{clicked}"):
+            if st.session_state[f"duration_{clicked}"] > 15:
+                st.session_state[f"duration_{clicked}"] -= 1
+    with col_dur2:
+        st.write(f"{st.session_state[f'duration_{clicked}']} min")
+    with col_dur3:
+        if st.button("+", key=f"plus_dur_{clicked}"):
+            if st.session_state[f"duration_{clicked}"] < 240:
+                st.session_state[f"duration_{clicked}"] += 1
+
     with st.form(f"{clicked}_form"):
-        st.markdown(f"#### Book: {clicked}")
-        custom_name = ""
-        if clicked == "Other":
-            custom_name = st.text_input("Enter event name")
-
-        date = st.date_input("Pick date", datetime.date.today())
-        base_time = datetime.datetime.now().replace(second=0, microsecond=0).time()
-        if f"time_{clicked}" not in st.session_state:
-            st.session_state[f"time_{clicked}"] = base_time
-        if f"duration_{clicked}" not in st.session_state:
-            st.session_state[f"duration_{clicked}"] = 30
-
-        col_time1, col_time2, col_time3 = st.columns([1,2,1])
-        with col_time1:
-            if st.button("−1 min", key=f"minus_time_{clicked}"):
-                new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
-                            - datetime.timedelta(minutes=1)).time()
-                st.session_state[f"time_{clicked}"] = new_time
-        with col_time2:
-            st.write(st.session_state[f"time_{clicked}"].strftime("%I:%M %p"))
-        with col_time3:
-            if st.button("+1 min", key=f"plus_time_{clicked}"):
-                new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
-                            + datetime.timedelta(minutes=1)).time()
-                st.session_state[f"time_{clicked}"] = new_time
-
-        col_dur1, col_dur2, col_dur3 = st.columns([1,2,1])
-        with col_dur1:
-            if st.button("−", key=f"minus_dur_{clicked}"):
-                if st.session_state[f"duration_{clicked}"] > 15:
-                    st.session_state[f"duration_{clicked}"] -= 1
-        with col_dur2:
-            st.write(f"{st.session_state[f'duration_{clicked}']} min")
-        with col_dur3:
-            if st.button("+", key=f"plus_dur_{clicked}"):
-                if st.session_state[f"duration_{clicked}"] < 240:
-                    st.session_state[f"duration_{clicked}"] += 1
-
-        submit = st.form_submit_button("Book Now")
+        st.write("✅ Confirm above settings and click below to book:")
+        submit = st.form_submit_button("✅ Book Now")
 
         if submit:
             tz = pytz.timezone('Asia/Kolkata')
