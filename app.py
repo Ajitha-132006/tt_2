@@ -1,73 +1,44 @@
 import streamlit as st
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
 import datetime
 import pytz
 from dateparser.search import search_dates
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
-import json
 
-# --- CONFIG ---
+# Google Calendar setup
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-REDIRECT_URI = "https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
+service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info, scopes=SCOPES
+)
+service = build('calendar', 'v3', credentials=credentials)
+CALENDAR_ID = 'chalasaniajitha@gmail.com'
 
-# Load client secret from Streamlit secrets
-client_secret_json = json.loads(st.secrets["CLIENT_SECRET_JSON"])
-
-# Save to temp file (required by google-auth)
-with open("client_secret.json", "w") as f:
-    json.dump(client_secret_json, f)
-
-CLIENT_SECRET_JSON = "client_secret.json"
-
-# --- Initialize session state ---
-if "credentials" not in st.session_state:
-    st.session_state.credentials = None
-if "clicked_type" not in st.session_state:
-    st.session_state.clicked_type = None
-if "latest_event" not in st.session_state:
-    st.session_state.latest_event = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = {}
-
-# --- OAuth helpers ---
-def run_oauth_flow():
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRET_JSON,
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
-    auth_url, _ = flow.authorization_url(prompt='consent')
-    st.session_state.flow = flow
-    st.write("Please authorize to proceed:")
-    st.markdown(f"[Click here to login with Google]({auth_url})")
-
-def fetch_token_from_code(flow, code):
-    flow.fetch_token(code=code)
-    return flow.credentials
-
-def build_calendar_service():
-    return build('calendar', 'v3', credentials=st.session_state.credentials)
-
-# --- Event helpers ---
-def create_event(service, summary, start_dt, end_dt):
+def create_event(summary, start_dt, end_dt):
     event = {
         'summary': summary,
         'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'}
     }
-    created_event = service.events().insert(calendarId='primary', body=event).execute()
-    st.session_state.latest_event = {
-        "summary": summary,
-        "time": start_dt.strftime('%I:%M %p'),
-        "link": created_event.get('htmlLink')
-    }
+    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
     return created_event.get('htmlLink')
 
-def check_availability(service, start, end):
+def get_todays_events():
+    tz = pytz.timezone('Asia/Kolkata')
+    today_start = datetime.datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + datetime.timedelta(days=1)
     events_result = service.events().list(
-        calendarId='primary',
+        calendarId=CALENDAR_ID,
+        timeMin=today_start.isoformat(),
+        timeMax=today_end.isoformat(),
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+    return events_result.get('items', [])
+
+def check_availability(start, end):
+    events_result = service.events().list(
+        calendarId=CALENDAR_ID,
         timeMin=start.isoformat(),
         timeMax=end.isoformat(),
         singleEvents=True,
@@ -76,112 +47,90 @@ def check_availability(service, start, end):
     return len(events_result.get('items', [])) == 0
 
 def refresh_sidebar():
-    with st.sidebar:
-        st.title("📌 Latest Booking")
-        event = st.session_state.latest_event
-        if event:
-            st.write(f"✅ **{event['summary']}** at {event['time']} — [👉 View here]({event['link']})")
-        else:
-            st.info("No bookings yet.")
+    st.sidebar.markdown("## 📌 <span style='color:#4CAF50'>Today's Schedule (IST)</span>", unsafe_allow_html=True)
+    todays_events = get_todays_events()
+    if not todays_events:
+        st.sidebar.info("No events scheduled today.")
+    else:
+        for e in todays_events:
+            start = e['start'].get('dateTime', e['start'].get('date'))
+            start_dt = datetime.datetime.fromisoformat(start).astimezone(pytz.timezone('Asia/Kolkata'))
+            st.sidebar.markdown(
+                f"<div style='background-color:#e8f5e9;padding:5px;border-radius:5px;'>"
+                f"<b>{e['summary']}</b> at {start_dt.strftime('%I:%M %p')}</div>",
+                unsafe_allow_html=True
+            )
 
-# --- CSS ---
-st.markdown("""
-<style>
-.stButton > button {
-    background-color: #007acc;
-    color: white !important;
-    font-weight: bold;
-    border-radius: 6px;
-    padding: 6px 12px;
-}
-.stButton > button:hover {
-    background-color: #005f99;
-    color: white !important;
-}
-.stChatMessage {
-    background-color: #eef6fb;
-    padding: 10px;
-    border-radius: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
+# Main title
+st.markdown("<h1 style='color:#3f51b5;'>💬 Interactive Calendar Booking Bot</h1>", unsafe_allow_html=True)
 
-# --- Main app ---
-st.title("💬 Calendar Booking Bot")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "pending_suggestion" not in st.session_state:
+    st.session_state.pending_suggestion = {}
 
-# --- OAuth handler ---
-query_params = st.query_params
-if 'code' in query_params and st.session_state.credentials is None:
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRET_JSON,
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
-    code = query_params['code'][0]
-    try:
-        creds = fetch_token_from_code(flow, code)
-        st.session_state.credentials = creds
-        st.success("✅ Logged in successfully!")
-        st.experimental_rerun()
-    except Exception as e:
-        st.error(f"OAuth failed: {e}")
-        run_oauth_flow()
-        st.stop()
-
-if st.session_state.credentials is None:
-    run_oauth_flow()
-    st.stop()
-
-# --- Build service ---
-service = build_calendar_service()
-
-# --- Sidebar ---
 refresh_sidebar()
 
-# --- Booking UI buttons ---
+# Quick Book UI
+st.markdown("### <span style='color:#009688'>Quick Book</span>", unsafe_allow_html=True)
 col1, col2, col3, col4 = st.columns(4)
+clicked = None
 if col1.button("📞 Call"):
-    st.session_state.clicked_type = "Call"
+    clicked = "Call"
 if col2.button("📅 Meeting"):
-    st.session_state.clicked_type = "Meeting"
+    clicked = "Meeting"
 if col3.button("✈ Flight"):
-    st.session_state.clicked_type = "Flight"
+    clicked = "Flight"
 if col4.button("📝 Other"):
-    st.session_state.clicked_type = "Other"
+    clicked = "Other"
 
-# --- Manual booking form ---
-if st.session_state.clicked_type:
-    clicked = st.session_state.clicked_type
-    st.markdown(f"#### Book: {clicked}")
-    custom_name = ""
-    if clicked == "Other":
-        custom_name = st.text_input("Enter event name")
-
-    date = st.date_input("Pick date", datetime.date.today())
-    hour = st.selectbox("Hour", list(range(1, 13)))
-    minute = st.selectbox("Minute", list(range(0, 60)))
-    am_pm = st.selectbox("AM/PM", ["AM", "PM"])
-    duration = st.selectbox("Duration (min)", list(range(15, 241, 15)))
-
+if clicked:
     with st.form(f"{clicked}_form"):
+        st.markdown(f"<h4 style='color:#607d8b;'>Booking: {clicked}</h4>", unsafe_allow_html=True)
+        custom_name = ""
+        if clicked == "Other":
+            custom_name = st.text_input("Enter event name")
+
+        date = st.date_input("Pick date", datetime.date.today())
+        col_t1, col_t2, col_t3 = st.columns([3,2,2])
+        hour = col_t1.selectbox("Hour", list(range(1, 13)))
+        minute = col_t2.selectbox("Minute", [0, 15, 30, 45])
+        am_pm = col_t3.selectbox("AM/PM", ["AM", "PM"])
+        manual_time_input = st.text_input("Optional manual time (HH:MM AM/PM)", "")
+        duration = st.selectbox("Duration (minutes)", [15, 30, 45, 60, 90, 120])
+        manual_duration = st.text_input("Optional manual duration (minutes)", "")
+
         submit = st.form_submit_button("✅ Book Now")
+
         if submit:
             tz = pytz.timezone('Asia/Kolkata')
-            hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
-            time_val = datetime.time(hr24, minute)
-            start_dt = tz.localize(datetime.datetime.combine(date, time_val))
-            end_dt = start_dt + datetime.timedelta(minutes=duration)
-            summary = custom_name if clicked == "Other" else clicked
+            try:
+                if manual_time_input:
+                    parsed_time = datetime.datetime.strptime(manual_time_input.strip(), "%I:%M %p").time()
+                else:
+                    hour_24 = hour % 12 + (12 if am_pm == "PM" else 0)
+                    parsed_time = datetime.time(hour=hour_24, minute=minute)
 
-            if check_availability(service, start_dt, end_dt):
-                link = create_event(service, summary, start_dt, end_dt)
-                st.chat_message("assistant").markdown(f"✅ **{summary} booked** — [👉 View here]({link})")
+                duration_val = int(manual_duration) if manual_duration else duration
+                start_dt = tz.localize(datetime.datetime.combine(date, parsed_time))
+                end_dt = start_dt + datetime.timedelta(minutes=duration_val)
+                summary = custom_name if clicked == "Other" else clicked
+
+                if check_availability(start_dt, end_dt):
+                    link = create_event(summary, start_dt, end_dt)
+                    msg = f"<div style='background-color:#d0f0c0;padding:10px;border-radius:5px;'>✅ <b>{summary} booked on {start_dt.strftime('%Y-%m-%d %I:%M %p')} IST</b> 👉 <a href='{link}' target='_blank'>View here</a></div>"
+                else:
+                    msg = f"<div style='background-color:#ffe0e0;padding:10px;border-radius:5px;'>❌ {summary} time slot is busy. Try another time.</div>"
+
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
                 refresh_sidebar()
-            else:
-                st.chat_message("assistant").markdown(f"❌ {summary} time slot is busy. Try a different time.")
+            except Exception as e:
+                st.error("⚠ Invalid manual time or duration format.")
 
-# --- Chat booking ---
+# Chat input
 user_input = st.chat_input("Ask me to book your meeting...")
+
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
@@ -196,13 +145,15 @@ if st.session_state.messages:
             start = pending["time"]
             end = start + datetime.timedelta(minutes=30)
             summary = pending.get("summary", "Scheduled Event")
-            link = create_event(service, summary, start, end)
-            reply = f"✅ **{summary} booked** — [👉 View here]({link})"
+            link = create_event(summary, start, end)
+            reply = f"<div style='background-color:#d0f0c0;padding:10px;border-radius:5px;'>✅ <b>{summary} booked on {start.strftime('%Y-%m-%d %I:%M %p')} IST</b> 👉 <a href='{link}' target='_blank'>View here</a></div>"
             st.session_state.pending_suggestion = {}
             refresh_sidebar()
+
         elif msg in ["no", "reject"]:
-            reply = "❌ Okay, suggest a different time."
+            reply = "<div style='background-color:#ffe0e0;padding:10px;border-radius:5px;'>❌ Okay, suggest a different time.</div>"
             st.session_state.pending_suggestion = {}
+
         else:
             if "flight" in msg:
                 summary = "Flight"
@@ -224,32 +175,34 @@ if st.session_state.messages:
             )
 
             if not result:
-                reply = "⚠ Could not parse date/time. Try `tomorrow 4 PM`."
+                reply = "<div style='background-color:#fff3cd;padding:10px;border-radius:5px;'>⚠ Could not parse date/time. Try `tomorrow 4 PM`.</div>"
             else:
                 parsed = result[0][1]
                 if parsed.tzinfo is None:
                     parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
                 end = parsed + datetime.timedelta(minutes=30)
 
-                if check_availability(service, parsed, end):
-                    link = create_event(service, summary, parsed, end)
-                    reply = f"✅ **{summary} booked** — [👉 View here]({link})"
+                if check_availability(parsed, end):
+                    link = create_event(summary, parsed, end)
+                    reply = f"<div style='background-color:#d0f0c0;padding:10px;border-radius:5px;'>✅ <b>{summary} booked on {parsed.strftime('%Y-%m-%d %I:%M %p')} IST</b> 👉 <a href='{link}' target='_blank'>View here</a></div>"
                     refresh_sidebar()
                 else:
                     for i in range(1, 4):
                         alt_start = parsed + datetime.timedelta(hours=i)
                         alt_end = alt_start + datetime.timedelta(minutes=30)
-                        if check_availability(service, alt_start, alt_end):
-                            reply = f"❌ Busy at requested time. How about **{alt_start.strftime('%Y-%m-%d %I:%M %p')} IST**? Reply `yes` to confirm."
+                        if check_availability(alt_start, alt_end):
+                            reply = f"<div style='background-color:#fff3cd;padding:10px;border-radius:5px;'>❌ Busy at requested time. How about <b>{alt_start.strftime('%Y-%m-%d %I:%M %p')} IST</b>? Reply `yes` to confirm.</div>"
                             st.session_state.pending_suggestion = {"time": alt_start, "summary": summary}
                             break
                     else:
-                        reply = "❌ Busy at requested time and no nearby slots found."
+                        reply = "<div style='background-color:#ffe0e0;padding:10px;border-radius:5px;'>❌ Busy at requested time. No nearby slots found.</div>"
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
 
+# Render chat history
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
     else:
-        st.chat_message("assistant").markdown(m["content"])
+        st.chat_message("assistant").markdown(m["content"], unsafe_allow_html=True)
