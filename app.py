@@ -130,12 +130,13 @@ if clicked:
             if check_availability(start_dt, end_dt):
                 link = create_event(summary, start_dt, end_dt)
                 msg = f"✅ <b>{summary}</b> booked for {start_dt.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
+                st.session_state.messages.append({"role":"assistant","content":msg})
+                st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
+                refresh_sidebar()
             else:
                 msg = f"❌ {summary} time slot is busy. Try another time."
-
-            st.session_state.messages.append({"role":"assistant","content":msg})
-            st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
-            refresh_sidebar()
+                st.session_state.messages.append({"role":"assistant","content":msg})
+                st.chat_message("assistant").markdown(msg, unsafe_allow_html=True)
 
 # CHAT INTERFACE
 user_input = st.chat_input("Ask me to book your meeting...")
@@ -156,11 +157,15 @@ if st.session_state.messages:
             link = create_event(summary,start,end)
             reply = f"✅ <b>{summary}</b> booked for {start.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
             st.session_state.pending_suggestion = {}
+            st.session_state.messages.append({"role":"assistant","content":reply})
+            st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
             refresh_sidebar()
 
         elif msg in ["no","reject"]:
             reply = "❌ Okay, suggest a different time."
             st.session_state.pending_suggestion = {}
+            st.session_state.messages.append({"role":"assistant","content":reply})
+            st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
 
         else:
             if "flight" in msg:
@@ -193,6 +198,9 @@ if st.session_state.messages:
                 if check_availability(parsed,end):
                     link = create_event(summary,parsed,end)
                     reply = f"✅ <b>{summary}</b> booked for {parsed.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
+                    st.session_state.pending_suggestion = {}
+                    st.session_state.messages.append({"role":"assistant","content":reply})
+                    st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
                     refresh_sidebar()
                 else:
                     for i in range(1,4):
@@ -205,8 +213,8 @@ if st.session_state.messages:
                     else:
                         reply = "❌ Busy at requested time. No nearby slots found."
 
-        st.session_state.messages.append({"role":"assistant","content":reply})
-        st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
+                    st.session_state.messages.append({"role":"assistant","content":reply})
+                    st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
 
 # SHOW HISTORY
 for m in st.session_state.messages:
