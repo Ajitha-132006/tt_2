@@ -73,19 +73,22 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_suggestion" not in st.session_state:
     st.session_state.pending_suggestion = {}
+if "clicked_type" not in st.session_state:
+    st.session_state.clicked_type = None
 
 st.markdown("### Quick Book")
 col1, col2, col3, col4 = st.columns(4)
-clicked = None
 
 if col1.button("📞 Call"):
-    clicked = "Call"
+    st.session_state.clicked_type = "Call"
 if col2.button("📅 Meeting"):
-    clicked = "Meeting"
+    st.session_state.clicked_type = "Meeting"
 if col3.button("✈ Flight"):
-    clicked = "Flight"
+    st.session_state.clicked_type = "Flight"
 if col4.button("📝 Other"):
-    clicked = "Other"
+    st.session_state.clicked_type = "Other"
+
+clicked = st.session_state.clicked_type
 
 if clicked:
     st.markdown(f"#### Book: {clicked}")
@@ -95,37 +98,47 @@ if clicked:
 
     date = st.date_input("Pick date", datetime.date.today())
 
-    # Manage time & duration state
+    # Initialize states
     if f"time_{clicked}" not in st.session_state:
         st.session_state[f"time_{clicked}"] = datetime.datetime.now().replace(second=0, microsecond=0).time()
     if f"duration_{clicked}" not in st.session_state:
         st.session_state[f"duration_{clicked}"] = 30
 
-    col_time1, col_time2, col_time3 = st.columns([1, 2, 1])
-    with col_time1:
-        if st.button("−1 min", key=f"minus_time_{clicked}"):
-            new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
-                        - datetime.timedelta(minutes=1)).time()
-            st.session_state[f"time_{clicked}"] = new_time
-    with col_time2:
-        st.write(st.session_state[f"time_{clicked}"].strftime("%I:%M %p"))
-    with col_time3:
-        if st.button("+1 min", key=f"plus_time_{clicked}"):
-            new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
-                        + datetime.timedelta(minutes=1)).time()
-            st.session_state[f"time_{clicked}"] = new_time
+    # Time input
+    hour = st.selectbox("Hour", list(range(1, 13)), index=(st.session_state[f"time_{clicked}"].hour % 12)-1)
+    minute = st.selectbox("Minute", list(range(0, 60)), index=st.session_state[f"time_{clicked}"].minute)
+    am_pm = st.selectbox("AM/PM", ["AM", "PM"], index=0 if st.session_state[f"time_{clicked}"].hour < 12 else 1)
 
-    col_dur1, col_dur2, col_dur3 = st.columns([1, 2, 1])
+    # Apply + / - buttons for time
+    col_time1, col_time2 = st.columns(2)
+    with col_time1:
+        if st.button("−1 min"):
+            dt_comb = datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"])
+            dt_comb = (dt_comb - datetime.timedelta(minutes=1)).time()
+            st.session_state[f"time_{clicked}"] = dt_comb
+    with col_time2:
+        if st.button("+1 min"):
+            dt_comb = datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"])
+            dt_comb = (dt_comb + datetime.timedelta(minutes=1)).time()
+            st.session_state[f"time_{clicked}"] = dt_comb
+
+    # Duration input
+    duration_dropdown = st.selectbox("Duration (minutes)", list(range(15, 241, 15)), index=(st.session_state[f"duration_{clicked}"] // 15) - 1)
+
+    col_dur1, col_dur2 = st.columns(2)
     with col_dur1:
-        if st.button("−", key=f"minus_dur_{clicked}"):
+        if st.button("− duration"):
             if st.session_state[f"duration_{clicked}"] > 15:
                 st.session_state[f"duration_{clicked}"] -= 1
     with col_dur2:
-        st.write(f"{st.session_state[f'duration_{clicked}']} min")
-    with col_dur3:
-        if st.button("+", key=f"plus_dur_{clicked}"):
+        if st.button("+ duration"):
             if st.session_state[f"duration_{clicked}"] < 240:
                 st.session_state[f"duration_{clicked}"] += 1
+
+    # Update time and duration state from dropdowns
+    hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
+    st.session_state[f"time_{clicked}"] = datetime.time(hr24, minute)
+    st.session_state[f"duration_{clicked}"] = duration_dropdown
 
     with st.form(f"{clicked}_form"):
         st.write("✅ Confirm above settings and click below to book:")
@@ -148,8 +161,8 @@ if clicked:
                 st.session_state.messages.append({"role": "assistant", "content": msg})
                 st.chat_message("assistant").markdown(msg)
 
+# Chat input / history (unchanged)
 user_input = st.chat_input("Ask me to book your meeting...")
-
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
@@ -168,11 +181,9 @@ if st.session_state.messages:
             reply = f"✅ **{summary} booked** — [👉 View here]({link})"
             st.session_state.pending_suggestion = {}
             refresh_sidebar()
-
         elif msg in ["no", "reject"]:
             reply = "❌ Okay, suggest a different time."
             st.session_state.pending_suggestion = {}
-
         else:
             if "flight" in msg:
                 summary = "Flight"
