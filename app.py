@@ -119,7 +119,7 @@ if 'code' in query_params and st.session_state.credentials is None:
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRET_JSON,
         scopes=SCOPES,
-        redirect_uri=st.experimental_get_url()
+        redirect_uri="https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
     )
     code = query_params['code'][0]
     creds = fetch_token_from_code(flow, code)
