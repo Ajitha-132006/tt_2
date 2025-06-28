@@ -42,36 +42,39 @@ def get_events_in_range(start, end):
     return events_result.get('items', [])
 
 def refresh_sidebar():
-    tz = pytz.timezone('Asia/Kolkata')
-    now = datetime.datetime.now(tz)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start = today_start + datetime.timedelta(days=1)
-    day_after_start = tomorrow_start + datetime.timedelta(days=1)
+    with st.sidebar:
+        st.empty()  # Clear the sidebar at the start
 
-    today_events = get_events_in_range(today_start, tomorrow_start)
-    tomorrow_events = get_events_in_range(tomorrow_start, day_after_start)
+        st.title("📌 Calendar Schedule")
 
-    st.sidebar.title("📌 Calendar Schedule")
+        tz = pytz.timezone('Asia/Kolkata')
+        now = datetime.datetime.now(tz)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_start = today_start + datetime.timedelta(days=1)
+        day_after_start = tomorrow_start + datetime.timedelta(days=1)
 
-    st.sidebar.subheader("Today's Events")
-    if not today_events:
-        st.sidebar.info("No events today.")
-    else:
-        for e in today_events:
-            start = e['start'].get('dateTime', e['start'].get('date'))
-            start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
-            st.sidebar.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
+        today_events = get_events_in_range(today_start, tomorrow_start)
+        tomorrow_events = get_events_in_range(tomorrow_start, day_after_start)
 
-    st.sidebar.markdown("<hr style='border: 1px solid #ccc;'>", unsafe_allow_html=True)
+        st.subheader("Today's Events")
+        if not today_events:
+            st.info("No events today.")
+        else:
+            for e in today_events:
+                start = e['start'].get('dateTime', e['start'].get('date'))
+                start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
+                st.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
-    st.sidebar.subheader("Tomorrow's Events")
-    if not tomorrow_events:
-        st.sidebar.info("No events tomorrow.")
-    else:
-        for e in tomorrow_events:
-            start = e['start'].get('dateTime', e['start'].get('date'))
-            start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
-            st.sidebar.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
+        st.markdown("<hr style='border: 1px solid #ccc;'>", unsafe_allow_html=True)
+
+        st.subheader("Tomorrow's Events")
+        if not tomorrow_events:
+            st.info("No events tomorrow.")
+        else:
+            for e in tomorrow_events:
+                start = e['start'].get('dateTime', e['start'].get('date'))
+                start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
+                st.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
 # Initial state
 if "clicked_type" not in st.session_state:
