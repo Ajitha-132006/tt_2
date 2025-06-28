@@ -1,25 +1,65 @@
 import streamlit as st
-from googleapiclient.discovery import build
-from google.oauth2 import service_account
 import datetime
 import pytz
 from dateparser.search import search_dates
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+import os
+import json
 
-# --- Google Calendar Setup ---
+# --- CONFIG ---
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
-credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-service = build('calendar', 'v3', credentials=credentials)
-CALENDAR_ID = 'chalasaniajitha@gmail.com'
+client_secret_json = json.loads(st.secrets["CLIENT_SECRET_JSON"])
 
-# --- Functions ---
-def create_event(summary, start_dt, end_dt):
+# Save to temp file so google-auth can use it
+with open("client_secret.json", "w") as f:
+    json.dump(client_secret_json, f)
+
+CLIENT_SECRET_JSON = "client_secret.json"
+
+# --- Initialize session ---
+if "credentials" not in st.session_state:
+    st.session_state.credentials = None
+if "clicked_type" not in st.session_state:
+    st.session_state.clicked_type = None
+if "latest_event" not in st.session_state:
+    st.session_state.latest_event = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "pending_suggestion" not in st.session_state:
+    st.session_state.pending_suggestion = {}
+
+# --- Helper: OAuth flow ---
+def run_oauth_flow():
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRET_JSON,
+        scopes=SCOPES,
+        redirect_uri=st.experimental_get_url()
+    )
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    st.session_state.flow = flow
+    st.write("Please authorize:")
+    st.markdown(f"[Click here to login with Google]({auth_url})")
+
+def fetch_token_from_code(flow, code):
+    flow.fetch_token(code=code)
+    return flow.credentials
+
+# --- Helper: Build service ---
+def build_calendar_service():
+    creds = st.session_state.credentials
+    service = build('calendar', 'v3', credentials=creds)
+    return service
+
+# --- Helper: Create event ---
+def create_event(service, summary, start_dt, end_dt):
     event = {
         'summary': summary,
         'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'}
     }
-    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    created_event = service.events().insert(calendarId='primary', body=event).execute()
     st.session_state.latest_event = {
         "summary": summary,
         "time": start_dt.strftime('%I:%M %p'),
@@ -27,9 +67,9 @@ def create_event(summary, start_dt, end_dt):
     }
     return created_event.get('htmlLink')
 
-def check_availability(start, end):
+def check_availability(service, start, end):
     events_result = service.events().list(
-        calendarId=CALENDAR_ID,
+        calendarId='primary',
         timeMin=start.isoformat(),
         timeMax=end.isoformat(),
         singleEvents=True,
@@ -37,6 +77,7 @@ def check_availability(start, end):
     ).execute()
     return len(events_result.get('items', [])) == 0
 
+# --- Sidebar ---
 def refresh_sidebar():
     with st.sidebar:
         st.empty()
@@ -69,23 +110,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- State ---
-if "clicked_type" not in st.session_state:
-    st.session_state.clicked_type = None
-if "latest_event" not in st.session_state:
-    st.session_state.latest_event = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = {}
+# --- Main ---
+st.title("💬 Calendar Booking Bot")
+
+# --- Handle OAuth ---
+query_params = st.experimental_get_query_params()
+if 'code' in query_params and st.session_state.credentials is None:
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRET_JSON,
+        scopes=SCOPES,
+        redirect_uri=st.experimental_get_url()
+    )
+    code = query_params['code'][0]
+    creds = fetch_token_from_code(flow, code)
+    st.session_state.credentials = creds
+    st.success("✅ Logged in successfully! You can now book events.")
+    st.experimental_rerun()
+
+if st.session_state.credentials is None:
+    run_oauth_flow()
+    st.stop()
+
+# --- Build service ---
+service = build_calendar_service()
 
 # --- Sidebar ---
 refresh_sidebar()
 
-# --- Main ---
-st.title("💬 Interactive Calendar Booking Bot")
-
-# Show 4 options directly
+# --- Booking UI ---
 col1, col2, col3, col4 = st.columns(4)
 if col1.button("📞 Call"):
     st.session_state.clicked_type = "Call"
@@ -119,8 +171,8 @@ if st.session_state.clicked_type:
             end_dt = start_dt + datetime.timedelta(minutes=duration)
             summary = custom_name if clicked == "Other" else clicked
 
-            if check_availability(start_dt, end_dt):
-                link = create_event(summary, start_dt, end_dt)
+            if check_availability(service, start_dt, end_dt):
+                link = create_event(service, summary, start_dt, end_dt)
                 st.chat_message("assistant").markdown(f"✅ **{summary} booked** — [👉 View here]({link})")
                 refresh_sidebar()
             else:
@@ -142,7 +194,7 @@ if st.session_state.messages:
             start = pending["time"]
             end = start + datetime.timedelta(minutes=30)
             summary = pending.get("summary", "Scheduled Event")
-            link = create_event(summary, start, end)
+            link = create_event(service, summary, start, end)
             reply = f"✅ **{summary} booked** — [👉 View here]({link})"
             st.session_state.pending_suggestion = {}
             refresh_sidebar()
@@ -177,15 +229,15 @@ if st.session_state.messages:
                     parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
                 end = parsed + datetime.timedelta(minutes=30)
 
-                if check_availability(parsed, end):
-                    link = create_event(summary, parsed, end)
+                if check_availability(service, parsed, end):
+                    link = create_event(service, summary, parsed, end)
                     reply = f"✅ **{summary} booked** — [👉 View here]({link})"
                     refresh_sidebar()
                 else:
                     for i in range(1, 4):
                         alt_start = parsed + datetime.timedelta(hours=i)
                         alt_end = alt_start + datetime.timedelta(minutes=30)
-                        if check_availability(alt_start, alt_end):
+                        if check_availability(service, alt_start, alt_end):
                             reply = f"❌ Busy at requested time. How about **{alt_start.strftime('%Y-%m-%d %I:%M %p')} IST**? Reply `yes` to confirm."
                             st.session_state.pending_suggestion = {"time": alt_start, "summary": summary}
                             break
