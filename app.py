@@ -1,178 +1,119 @@
-import streamlit as st
-import datetime
-import pytz
 import json
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
+import streamlit as st
 from googleapiclient.discovery import build
+from google.oauth2 import service_account
+import datetime
 from dateparser.search import search_dates
+import pytz
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-# AUTH HANDLER
-def get_credentials():
-    creds = None
-    if "token_info" in st.session_state:
-        creds = Credentials.from_authorized_user_info(st.session_state["token_info"], SCOPES)
-    else:
-        client_config = json.loads(st.secrets["CLIENT_SECRET_JSON"])
-        flow = Flow.from_client_config(client_config, SCOPES)
-        flow.redirect_uri = "https://gxmeprxbxwjpyuansmifxn.streamlit.app/"
+service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info, scopes=SCOPES)
 
-        params = st.experimental_get_query_params()
-        if "code" not in params:
-            auth_url, _ = flow.authorization_url(prompt='consent')
-            st.markdown(f"[👉 Click here to authorize Google Calendar access]({auth_url})")
-            st.stop()
-        else:
-            code = params["code"][0]
-            flow.fetch_token(code=code)
-            creds = flow.credentials
-            st.session_state["token_info"] = json.loads(creds.to_json())
-    
-    return creds
+service = build('calendar', 'v3', credentials=credentials)
 
-creds = get_credentials()
-service = build("calendar", "v3", credentials=creds)
+CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Or the specific calendar ID your service account has access to
 
-# HELPERS
-def create_event(summary, start_dt, end_dt):
-    event = {
-        'summary': summary,
-        'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
-        'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'}
-    }
-    created_event = service.events().insert(calendarId='primary', body=event).execute()
-    return created_event.get('htmlLink')
-
-def get_todays_events():
-    tz = pytz.timezone('Asia/Kolkata')
-    today_start = datetime.datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + datetime.timedelta(days=1)
+def check_availability(start, end):
     events_result = service.events().list(
-        calendarId='primary',
-        timeMin=today_start.isoformat(),
-        timeMax=today_end.isoformat(),
+        calendarId=CALENDAR_ID,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
         singleEvents=True,
         orderBy='startTime'
     ).execute()
-    return events_result.get('items', [])
-
-def check_availability(start, end):
-    events = service.events().list(
-        calendarId='primary',
-        timeMin=start.isoformat(),
-        timeMax=end.isoformat(),
-        singleEvents=True
-    ).execute().get('items', [])
+    events = events_result.get('items', [])
     return len(events) == 0
 
-def refresh_sidebar():
-    st.sidebar.markdown("## 📌 <span style='color:#4CAF50'>Today's Schedule (IST)</span>", unsafe_allow_html=True)
-    events = get_todays_events()
-    if not events:
-        st.sidebar.info("No events scheduled today.")
-    else:
-        for e in events:
-            start = e['start'].get('dateTime', e['start'].get('date'))
-            start_dt = datetime.datetime.fromisoformat(start).astimezone(pytz.timezone('Asia/Kolkata'))
-            st.sidebar.markdown(
-                f"<div style='background-color:#e8f5e9;padding:5px;border-radius:5px;'>"
-                f"<b>{e['summary']}</b> at {start_dt.strftime('%I:%M %p')}</div>",
-                unsafe_allow_html=True
-            )
+def create_event(summary, start, end):
+    event = {
+        'summary': summary,
+        'start': {'dateTime': start.isoformat(), 'timeZone': 'Asia/Kolkata'},
+        'end': {'dateTime': end.isoformat(), 'timeZone': 'Asia/Kolkata'}
+    }
+    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    return created_event.get('htmlLink')
 
-# UI HEADER
-st.markdown("<h1 style='color:#3f51b5;'>💬 Interactive Calendar Booking Bot</h1>", unsafe_allow_html=True)
+# Streamlit chat interface
+st.title("📅 Calendar Booking Chatbot")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = {}
 
-refresh_sidebar()
-
-# CHAT INTERFACE
 user_input = st.chat_input("Ask me to book your meeting...")
+
+pending_suggestion = st.session_state.get("pending_suggestion", {})
+
 if user_input:
-    st.session_state.messages.append({"role":"user","content":user_input})
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    reply = ""
 
-if st.session_state.messages:
-    last = st.session_state.messages[-1]
-    if last["role"]=="user":
-        msg = last["content"].strip().lower()
-        pending = st.session_state.pending_suggestion
-        reply = ""
+    msg = user_input.strip().lower()
 
-        if msg in ["yes","ok","sure"] and "time" in pending:
-            start = pending["time"]
-            end = start + datetime.timedelta(minutes=30)
-            summary = pending.get("summary","Event")
-            link = create_event(summary,start,end)
-            reply = f"✅ <b>{summary}</b> booked for {start.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
-            st.session_state.pending_suggestion = {}
-            st.session_state.messages.append({"role":"assistant","content":reply})
-            st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
-            refresh_sidebar()
+    if msg in ["yes", "ok", "sure"] and "time" in pending_suggestion:
+        start_local = pending_suggestion["time"]
+        end_local = start_local + datetime.timedelta(minutes=30)
+        summary = pending_suggestion.get("summary", "Scheduled Event")
+        link = create_event(summary, start_local, end_local)
+        reply = f"✅ Booked {summary} for {start_local.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
+        pending_suggestion = {}
 
-        elif msg in ["no","reject"]:
-            reply = "❌ Okay, suggest a different time."
-            st.session_state.pending_suggestion = {}
-            st.session_state.messages.append({"role":"assistant","content":reply})
-            st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
+    elif msg in ["no", "reject"]:
+        reply = "❌ Okay, please suggest a different time."
+        pending_suggestion = {}
 
+    else:
+        # Determine event summary
+        if "flight" in msg:
+            summary = "Flight"
+        elif "call" in msg:
+            summary = "Call"
+        elif "meeting" in msg:
+            summary = "Meeting"
         else:
-            if "flight" in msg:
-                summary = "Flight"
-            elif "call" in msg:
-                summary = "Call"
-            elif "meeting" in msg:
-                summary = "Meeting"
+            summary = "Scheduled Event"
+
+        result = search_dates(
+            msg,
+            settings={
+                'PREFER_DATES_FROM': 'future',
+                'RETURN_AS_TIMEZONE_AWARE': True,
+                'TIMEZONE': 'Asia/Kolkata',
+                'RELATIVE_BASE': datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+            }
+        )
+
+        if not result:
+            reply = "⚠ I couldn’t understand the date/time. Try saying 'tomorrow 4 PM' or 'next Friday 10 AM'."
+        else:
+            parsed = result[0][1]
+            if parsed.tzinfo is None:
+                parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
+
+            end_local = parsed + datetime.timedelta(minutes=30)
+
+            if check_availability(parsed, end_local):
+                link = create_event(summary, parsed, end_local)
+                reply = f"✅ Booked {summary} for {parsed.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
             else:
-                summary = "Event"
-
-            result = search_dates(
-                msg,
-                settings={
-                    'PREFER_DATES_FROM':'future',
-                    'RETURN_AS_TIMEZONE_AWARE':True,
-                    'TIMEZONE':'Asia/Kolkata',
-                    'RELATIVE_BASE':datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-                }
-            )
-
-            if not result:
-                reply = "⚠ Could not parse date/time. Try `tomorrow 4 PM`."
-            else:
-                parsed = result[0][1]
-                if parsed.tzinfo is None:
-                    parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
-                end = parsed + datetime.timedelta(minutes=30)
-
-                if check_availability(parsed,end):
-                    link = create_event(summary,parsed,end)
-                    reply = f"✅ <b>{summary}</b> booked for {parsed.strftime('%Y-%m-%d %I:%M %p')} IST 👉 [View here]({link})"
-                    st.session_state.pending_suggestion = {}
-                    st.session_state.messages.append({"role":"assistant","content":reply})
-                    st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
-                    refresh_sidebar()
+                # Suggest next 3 slots
+                for i in range(1, 4):
+                    alt_start = parsed + datetime.timedelta(hours=i)
+                    alt_end = alt_start + datetime.timedelta(minutes=30)
+                    if check_availability(alt_start, alt_end):
+                        reply = f"❌ Busy at requested time. How about {alt_start.strftime('%Y-%m-%d %I:%M %p')}?"
+                        pending_suggestion = {"time": alt_start, "summary": summary}
+                        break
                 else:
-                    for i in range(1,4):
-                        alt = parsed + datetime.timedelta(hours=i)
-                        alt_end = alt + datetime.timedelta(minutes=30)
-                        if check_availability(alt,alt_end):
-                            reply = f"❌ Busy at requested time. How about {alt.strftime('%Y-%m-%d %I:%M %p')} IST? Reply `yes` to confirm."
-                            st.session_state.pending_suggestion = {"time":alt,"summary":summary}
-                            break
-                    else:
-                        reply = "❌ Busy at requested time. No nearby slots found."
+                    reply = "❌ Busy at requested time and no nearby slots found. Please suggest another time."
 
-                    st.session_state.messages.append({"role":"assistant","content":reply})
-                    st.chat_message("assistant").markdown(reply, unsafe_allow_html=True)
+    st.session_state["pending_suggestion"] = pending_suggestion
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# SHOW HISTORY
 for m in st.session_state.messages:
-    if m["role"]=="user":
+    if m["role"] == "user":
         st.chat_message("user").write(m["content"])
     else:
-        st.chat_message("assistant").markdown(m["content"], unsafe_allow_html=True)
+        st.chat_message("assistant").write(m["content"])
