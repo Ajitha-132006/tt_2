@@ -5,13 +5,14 @@ import datetime
 import pytz
 from dateparser.search import search_dates
 
-# Setup
+# --- Google Calendar Setup ---
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
 credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 service = build('calendar', 'v3', credentials=credentials)
 CALENDAR_ID = 'chalasaniajitha@gmail.com'
 
+# --- Functions ---
 def create_event(summary, start_dt, end_dt):
     event = {
         'summary': summary,
@@ -43,8 +44,7 @@ def get_events_in_range(start, end):
 
 def refresh_sidebar():
     with st.sidebar:
-        st.empty()  # Clear the sidebar at the start
-
+        st.empty()
         st.title("📌 Calendar Schedule")
 
         tz = pytz.timezone('Asia/Kolkata')
@@ -76,63 +76,78 @@ def refresh_sidebar():
                 start_dt = datetime.datetime.fromisoformat(start).astimezone(tz)
                 st.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
-# Initial state
-if "clicked_type" not in st.session_state:
-    st.session_state.clicked_type = None
-if "quickbox_open" not in st.session_state:
-    st.session_state.quickbox_open = True
-if "last_booking_msg" not in st.session_state:
-    st.session_state.last_booking_msg = None
-
-refresh_sidebar()
-
+# --- Styling ---
 st.markdown("""
 <style>
-.stButton > button { background-color: #007acc; color: white; font-weight: bold; border-radius: 6px; }
-.stChatMessage { background-color: #eef6fb; padding: 10px; border-radius: 10px; }
-h1, h2, h3, h4 { color: #007acc; }
+.stButton > button {
+    background-color: #007acc;
+    color: white;
+    font-weight: bold;
+    border-radius: 6px;
+    padding: 6px 12px;
+}
+.stButton > button:hover {
+    background-color: #005f99;
+}
+.stChatMessage {
+    background-color: #eef6fb;
+    padding: 10px;
+    border-radius: 10px;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# --- Session state ---
+if "quickbox_open" not in st.session_state:
+    st.session_state.quickbox_open = False
+if "clicked_type" not in st.session_state:
+    st.session_state.clicked_type = None
+if "last_booking_msg" not in st.session_state:
+    st.session_state.last_booking_msg = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "pending_suggestion" not in st.session_state:
+    st.session_state.pending_suggestion = {}
+
+# --- Sidebar ---
+refresh_sidebar()
+
+# --- Main UI ---
 st.title("💬 Interactive Calendar Booking Bot")
 
-# Quick Book toggle
-toggle_icon = "🔽" if st.session_state.quickbox_open else "🔼"
-if st.button(f"{toggle_icon} Quick Book"):
+# Quick Box toggle
+toggle_label = "🔽 Quick Book (open)" if st.session_state.quickbox_open else "▶ Quick Book (closed)"
+if st.button(toggle_label):
     st.session_state.quickbox_open = not st.session_state.quickbox_open
+    st.session_state.clicked_type = None
 
+# Quick Box content
 if st.session_state.quickbox_open:
-    st.markdown("### Quick Book")
-    col1, col2, col3, col4 = st.columns(4)
-
-    if col1.button("📞 Call"):
-        st.session_state.clicked_type = "Call"
-    if col2.button("📅 Meeting"):
-        st.session_state.clicked_type = "Meeting"
-    if col3.button("✈ Flight"):
-        st.session_state.clicked_type = "Flight"
-    if col4.button("📝 Other"):
-        st.session_state.clicked_type = "Other"
-
-    clicked = st.session_state.clicked_type
-
-    if clicked:
+    if st.session_state.clicked_type is None:
+        col1, col2, col3, col4 = st.columns(4)
+        if col1.button("📞 Call"):
+            st.session_state.clicked_type = "Call"
+        if col2.button("📅 Meeting"):
+            st.session_state.clicked_type = "Meeting"
+        if col3.button("✈ Flight"):
+            st.session_state.clicked_type = "Flight"
+        if col4.button("📝 Other"):
+            st.session_state.clicked_type = "Other"
+    else:
+        clicked = st.session_state.clicked_type
         st.markdown(f"#### Book: {clicked}")
         custom_name = ""
         if clicked == "Other":
             custom_name = st.text_input("Enter event name")
 
         date = st.date_input("Pick date", datetime.date.today())
-
         hour = st.selectbox("Hour", list(range(1, 13)))
         minute = st.selectbox("Minute", list(range(0, 60)))
         am_pm = st.selectbox("AM/PM", ["AM", "PM"])
         duration = st.selectbox("Duration (min)", list(range(15, 241, 15)))
 
         with st.form(f"{clicked}_form"):
-            st.write("✅ Confirm above settings and click below to book:")
             submit = st.form_submit_button("✅ Book Now")
-
             if submit:
                 tz = pytz.timezone('Asia/Kolkata')
                 hr24 = hour % 12 + (12 if am_pm == "PM" else 0)
@@ -148,21 +163,16 @@ if st.session_state.quickbox_open:
                 else:
                     st.session_state.last_booking_msg = f"❌ {summary} time slot is busy. Try a different time."
 
-# Show last booking message
+# Show last booking result
 if st.session_state.last_booking_msg:
     st.chat_message("assistant").markdown(st.session_state.last_booking_msg)
 
-# Chat input
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = {}
-
+# --- Chat input ---
 user_input = st.chat_input("Ask me to book your meeting...")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-# Chat logic
+# Chat processing
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
