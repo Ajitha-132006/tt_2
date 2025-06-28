@@ -8,9 +8,7 @@ from dateparser.search import search_dates
 # Setup
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES
-)
+credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 service = build('calendar', 'v3', credentials=credentials)
 CALENDAR_ID = 'chalasaniajitha@gmail.com'
 
@@ -59,14 +57,14 @@ def refresh_sidebar():
                 start_dt = datetime.datetime.fromisoformat(start).astimezone(pytz.timezone('Asia/Kolkata'))
                 st.write(f"✅ **{e['summary']}** at {start_dt.strftime('%I:%M %p')}")
 
-# --- Initial sidebar render ---
 refresh_sidebar()
 
-# --- Main UI ---
+# --- Custom CSS ---
 st.markdown("""
 <style>
-.stButton > button { background-color: #4CAF50; color: white; font-weight: bold; }
-.stChatMessage { background-color: #f1f1f1; padding: 8px; border-radius: 10px; }
+.stButton > button { background-color: #007acc; color: white; font-weight: bold; border-radius: 6px; }
+.stChatMessage { background-color: #eef6fb; padding: 10px; border-radius: 10px; }
+h1, h2, h3, h4 { color: #007acc; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,28 +96,44 @@ if clicked:
             custom_name = st.text_input("Enter event name")
 
         date = st.date_input("Pick date", datetime.date.today())
-        manual_time = st.checkbox("Enter time manually")
+        base_time = datetime.datetime.now().replace(second=0, microsecond=0).time()
+        if f"time_{clicked}" not in st.session_state:
+            st.session_state[f"time_{clicked}"] = base_time
+        if f"duration_{clicked}" not in st.session_state:
+            st.session_state[f"duration_{clicked}"] = 30
 
-        if manual_time:
-            time_input = st.text_input("Enter time (e.g. 3:30 PM)")
-        else:
-            time_val = st.time_input("Pick start time", datetime.datetime.now().time())
+        col_time1, col_time2, col_time3 = st.columns([1,2,1])
+        with col_time1:
+            if st.button("−1 min", key=f"minus_time_{clicked}"):
+                new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
+                            - datetime.timedelta(minutes=1)).time()
+                st.session_state[f"time_{clicked}"] = new_time
+        with col_time2:
+            st.write(st.session_state[f"time_{clicked}"].strftime("%I:%M %p"))
+        with col_time3:
+            if st.button("+1 min", key=f"plus_time_{clicked}"):
+                new_time = (datetime.datetime.combine(datetime.date.today(), st.session_state[f"time_{clicked}"]) 
+                            + datetime.timedelta(minutes=1)).time()
+                st.session_state[f"time_{clicked}"] = new_time
 
-        duration = st.number_input("Duration (minutes)", min_value=15, max_value=240, value=30, step=15)
+        col_dur1, col_dur2, col_dur3 = st.columns([1,2,1])
+        with col_dur1:
+            if st.button("−", key=f"minus_dur_{clicked}"):
+                if st.session_state[f"duration_{clicked}"] > 15:
+                    st.session_state[f"duration_{clicked}"] -= 1
+        with col_dur2:
+            st.write(f"{st.session_state[f'duration_{clicked}']} min")
+        with col_dur3:
+            if st.button("+", key=f"plus_dur_{clicked}"):
+                if st.session_state[f"duration_{clicked}"] < 240:
+                    st.session_state[f"duration_{clicked}"] += 1
+
         submit = st.form_submit_button("Book Now")
 
         if submit:
             tz = pytz.timezone('Asia/Kolkata')
-            if manual_time:
-                try:
-                    parsed_time = datetime.datetime.strptime(time_input.strip(), "%I:%M %p").time()
-                    time_val = parsed_time
-                except:
-                    st.error("❌ Invalid time format. Use e.g. 3:30 PM")
-                    st.stop()
-
-            start_dt = tz.localize(datetime.datetime.combine(date, time_val))
-            end_dt = start_dt + datetime.timedelta(minutes=duration)
+            start_dt = tz.localize(datetime.datetime.combine(date, st.session_state[f"time_{clicked}"]))
+            end_dt = start_dt + datetime.timedelta(minutes=st.session_state[f"duration_{clicked}"])
             summary = custom_name if clicked == "Other" else clicked
 
             if check_availability(start_dt, end_dt):
@@ -133,13 +147,11 @@ if clicked:
                 st.session_state.messages.append({"role": "assistant", "content": msg})
                 st.chat_message("assistant").markdown(msg)
 
-# --- Chat input ---
 user_input = st.chat_input("Ask me to book your meeting...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-# --- Chat processing ---
 if st.session_state.messages:
     last_msg = st.session_state.messages[-1]
     if last_msg["role"] == "user":
@@ -205,7 +217,6 @@ if st.session_state.messages:
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# --- Render chat history ---
 for m in st.session_state.messages:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
