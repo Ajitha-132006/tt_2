@@ -1,30 +1,41 @@
-import json
 import streamlit as st
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import datetime
-from dateparser.search import search_dates
 import pytz
+from dateparser.search import search_dates
 
+# ---- GOOGLE CALENDAR SETUP ----
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-
-service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES)
-
+service_account_info = dict(st.secrets["SERVICE_ACCOUNT_JSON"])
+credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 service = build('calendar', 'v3', credentials=credentials)
+CALENDAR_ID = 'primary'
 
-CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Or the specific calendar ID your service account has access to
+# ---- HELPER FUNCTIONS ----
+def get_today_events():
+    tz = pytz.timezone('Asia/Kolkata')
+    now = datetime.datetime.now(tz)
+    end_of_day = now.replace(hour=23, minute=59, second=59)
 
-def check_availability(start, end):
     events_result = service.events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=now.isoformat(),
+        timeMax=end_of_day.isoformat(),
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+
+    return events_result.get('items', [])
+
+def is_free(start, end):
+    events = service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=start.isoformat(),
         timeMax=end.isoformat(),
         singleEvents=True,
         orderBy='startTime'
-    ).execute()
-    events = events_result.get('items', [])
+    ).execute().get('items', [])
     return len(events) == 0
 
 def create_event(summary, start, end):
@@ -33,84 +44,81 @@ def create_event(summary, start, end):
         'start': {'dateTime': start.isoformat(), 'timeZone': 'Asia/Kolkata'},
         'end': {'dateTime': end.isoformat(), 'timeZone': 'Asia/Kolkata'}
     }
-    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-    return created_event.get('htmlLink')
+    created = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    return created.get('htmlLink')
 
-# Streamlit chat interface
-st.title("📅 Calendar Booking Chatbot")
+def parse_datetime_from_text(text):
+    result = search_dates(
+        text,
+        settings={
+            'PREFER_DATES_FROM': 'future',
+            'RETURN_AS_TIMEZONE_AWARE': True,
+            'TIMEZONE': 'Asia/Kolkata',
+            'RELATIVE_BASE': datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+        }
+    )
+    if result:
+        return result[0][1]
+    return None
 
+def handle_user_input(msg):
+    msg_lower = msg.lower()
+    parsed_dt = parse_datetime_from_text(msg)
+
+    if any(x in msg_lower for x in ["book", "schedule", "set up", "arrange"]) and parsed_dt:
+        end_dt = parsed_dt + datetime.timedelta(minutes=30)
+        if is_free(parsed_dt, end_dt):
+            link = create_event("Scheduled Event", parsed_dt, end_dt)
+            return f"✅ Event booked for {parsed_dt.strftime('%Y-%m-%d %I:%M %p')}.\n[View in Calendar]({link})"
+        else:
+            return "❌ That time is busy. Please suggest another time."
+    
+    elif any(x in msg_lower for x in ["free", "available", "do i have time", "am i free"]) and parsed_dt:
+        end_dt = parsed_dt + datetime.timedelta(minutes=30)
+        if is_free(parsed_dt, end_dt):
+            return f"✅ Yes, you're free at {parsed_dt.strftime('%Y-%m-%d %I:%M %p')}."
+        else:
+            return f"❌ You're busy at {parsed_dt.strftime('%Y-%m-%d %I:%M %p')}."
+
+    elif parsed_dt:
+        # Vague prompt that at least had time -> treat as booking request
+        end_dt = parsed_dt + datetime.timedelta(minutes=30)
+        if is_free(parsed_dt, end_dt):
+            link = create_event("Scheduled Event", parsed_dt, end_dt)
+            return f"✅ Event booked for {parsed_dt.strftime('%Y-%m-%d %I:%M %p')}.\n[View in Calendar]({link})"
+        else:
+            return f"❌ That time is busy. Please suggest another time."
+
+    else:
+        return "⚠ I couldn't understand the date/time. Try saying something like 'Book a meeting tomorrow at 3 PM'."
+
+# ---- STREAMLIT UI ----
+st.title("📅 AI Calendar Booking Assistant")
+
+# Sidebar showing today's schedule
+st.sidebar.header("📌 Today's Schedule")
+events_today = get_today_events()
+if events_today:
+    for event in events_today:
+        start = event['start'].get('dateTime', event['start'].get('date'))
+        summary = event.get('summary', 'No Title')
+        st.sidebar.write(f"**{summary}**: {start}")
+else:
+    st.sidebar.write("No events scheduled today.")
+
+# Chat session
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-user_input = st.chat_input("Ask me to book your meeting...")
-
-pending_suggestion = st.session_state.get("pending_suggestion", {})
+user_input = st.chat_input("Ask me to book/check availability...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    reply = ""
-
-    msg = user_input.strip().lower()
-
-    if msg in ["yes", "ok", "sure"] and "time" in pending_suggestion:
-        start_local = pending_suggestion["time"]
-        end_local = start_local + datetime.timedelta(minutes=30)
-        summary = pending_suggestion.get("summary", "Scheduled Event")
-        link = create_event(summary, start_local, end_local)
-        reply = f"✅ Booked {summary} for {start_local.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
-        pending_suggestion = {}
-
-    elif msg in ["no", "reject"]:
-        reply = "❌ Okay, please suggest a different time."
-        pending_suggestion = {}
-
-    else:
-        # Determine event summary
-        if "flight" in msg:
-            summary = "Flight"
-        elif "call" in msg:
-            summary = "Call"
-        elif "meeting" in msg:
-            summary = "Meeting"
-        else:
-            summary = "Scheduled Event"
-
-        result = search_dates(
-            msg,
-            settings={
-                'PREFER_DATES_FROM': 'future',
-                'RETURN_AS_TIMEZONE_AWARE': True,
-                'TIMEZONE': 'Asia/Kolkata',
-                'RELATIVE_BASE': datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-            }
-        )
-
-        if not result:
-            reply = "⚠ I couldn’t understand the date/time. Try saying 'tomorrow 4 PM' or 'next Friday 10 AM'."
-        else:
-            parsed = result[0][1]
-            if parsed.tzinfo is None:
-                parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
-
-            end_local = parsed + datetime.timedelta(minutes=30)
-
-            if check_availability(parsed, end_local):
-                link = create_event(summary, parsed, end_local)
-                reply = f"✅ Booked {summary} for {parsed.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
-            else:
-                # Suggest next 3 slots
-                for i in range(1, 4):
-                    alt_start = parsed + datetime.timedelta(hours=i)
-                    alt_end = alt_start + datetime.timedelta(minutes=30)
-                    if check_availability(alt_start, alt_end):
-                        reply = f"❌ Busy at requested time. How about {alt_start.strftime('%Y-%m-%d %I:%M %p')}?"
-                        pending_suggestion = {"time": alt_start, "summary": summary}
-                        break
-                else:
-                    reply = "❌ Busy at requested time and no nearby slots found. Please suggest another time."
-
-    st.session_state["pending_suggestion"] = pending_suggestion
+    reply = handle_user_input(user_input)
     st.session_state.messages.append({"role": "assistant", "content": reply})
+
+    # Update sidebar after booking
+    st.experimental_rerun()
 
 for m in st.session_state.messages:
     if m["role"] == "user":
