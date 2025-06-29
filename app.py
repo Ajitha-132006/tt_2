@@ -8,19 +8,20 @@ import pytz
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
+# Authenticate
 service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
 credentials = service_account.Credentials.from_service_account_info(
     service_account_info, scopes=SCOPES)
 
 service = build('calendar', 'v3', credentials=credentials)
 
-CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Update with your actual calendar ID
+CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Replace with your calendar ID
 
+# Helper functions
 def get_today_events():
     tz = pytz.timezone('Asia/Kolkata')
     now = datetime.datetime.now(tz)
     end_of_day = tz.localize(datetime.datetime.combine(now.date(), datetime.time(23, 59)))
-    
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=now.isoformat(),
@@ -46,11 +47,9 @@ def delete_events(events):
         service.events().delete(calendarId=CALENDAR_ID, eventId=event['id']).execute()
 
 def create_event(summary, start, end):
-    # Remove any conflicting events
     _, overlapping = check_availability(start, end)
     if overlapping:
         delete_events(overlapping)
-        
     event = {
         'summary': summary,
         'start': {'dateTime': start.isoformat(), 'timeZone': 'Asia/Kolkata'},
@@ -58,27 +57,6 @@ def create_event(summary, start, end):
     }
     created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
     return created_event.get('htmlLink')
-
-# Sidebar: Today's schedule
-st.sidebar.header("📌 Today's Schedule")
-today_events = get_today_events()
-if today_events:
-    for e in today_events:
-        start_time = e['start'].get('dateTime', e['start'].get('date'))
-        st.sidebar.write(f"- **{e['summary']}** at {start_time}")
-else:
-    st.sidebar.write("No events today.")
-
-# Main chat UI
-st.title("📅 Smart Calendar Booking Bot")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = {}
-
-user_input = st.chat_input("Ask me to book your meeting...")
 
 def parse_time_from_input(text):
     tz = pytz.timezone('Asia/Kolkata')
@@ -98,13 +76,34 @@ def parse_time_from_input(text):
         parsed = tz.localize(parsed)
     return parsed
 
+# Sidebar with today’s schedule
+st.sidebar.header("📌 Today's Schedule")
+today_events = get_today_events()
+if today_events:
+    for e in today_events:
+        start_time = e['start'].get('dateTime', e['start'].get('date'))
+        st.sidebar.write(f"- **{e['summary']}** at {start_time}")
+else:
+    st.sidebar.write("No events today.")
+
+# Main UI
+st.title("📅 Smart Calendar Booking Bot")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "pending_suggestion" not in st.session_state:
+    st.session_state.pending_suggestion = {}
+
+user_input = st.chat_input("Ask me to book your meeting...")
+
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     reply = ""
     msg = user_input.strip().lower()
     pending = st.session_state.pending_suggestion
 
-    # Handle follow-up confirmation
+    # Confirmation of pending suggestion
     if msg in ["yes", "ok", "sure"] and pending:
         start = pending["time"]
         end = start + datetime.timedelta(minutes=30)
@@ -114,77 +113,73 @@ if user_input:
         st.session_state.pending_suggestion = {}
 
     elif msg in ["no", "reject"]:
-        reply = "❌ Okay, suggest a different time."
+        reply = "❌ Okay, please provide a different time."
         st.session_state.pending_suggestion = {}
 
     else:
+        # Decide summary
         summary = "Scheduled Event"
-        if any(word in msg for word in ["call"]):
+        if "call" in msg:
             summary = "Call"
-        elif any(word in msg for word in ["meeting"]):
+        elif "meeting" in msg:
             summary = "Meeting"
-        elif any(word in msg for word in ["flight"]):
+        elif "flight" in msg:
             summary = "Flight"
 
-        # Check if it’s a question about availability
-        if "free" in msg or "available" in msg or "busy" in msg:
-            parsed = parse_time_from_input(user_input)
-            if parsed:
-                end = parsed + datetime.timedelta(minutes=30)
-                free, _ = check_availability(parsed, end)
-                if free:
-                    reply = f"✅ You are free at {parsed.strftime('%Y-%m-%d %I:%M %p')}."
-                else:
-                    reply = f"❌ You're busy at that time."
-            else:
-                reply = "⚠ I couldn’t understand the time. Please specify a clearer time range."
-        
-        else:
-            parsed = parse_time_from_input(user_input)
+        parsed = parse_time_from_input(user_input)
 
-            if parsed:
+        if parsed:
+            tz = pytz.timezone('Asia/Kolkata')
+            now = datetime.datetime.now(tz)
+
+            if parsed < now:
+                reply = "⚠ The time you provided is in the past. Please give a future time."
+            else:
                 end = parsed + datetime.timedelta(minutes=30)
                 free, _ = check_availability(parsed, end)
                 if free:
                     link = create_event(summary, parsed, end)
                     reply = f"✅ Booked {summary} for {parsed.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
                 else:
-                    # Suggest next available slot
+                    # Suggest alternative slots
                     suggested = None
                     for i in range(1, 5):
                         alt_start = parsed + datetime.timedelta(hours=i)
                         alt_end = alt_start + datetime.timedelta(minutes=30)
-                        free_alt, _ = check_availability(alt_start, alt_end)
-                        if free_alt:
-                            suggested = alt_start
-                            break
+                        if alt_start > now:
+                            free_alt, _ = check_availability(alt_start, alt_end)
+                            if free_alt:
+                                suggested = alt_start
+                                break
                     if suggested:
                         reply = f"❌ Busy at requested time. How about {suggested.strftime('%Y-%m-%d %I:%M %p')}?"
                         st.session_state.pending_suggestion = {"time": suggested, "summary": summary}
                     else:
                         reply = "❌ Busy at requested time and no nearby slots found. Please suggest another time."
-            else:
-                # Handle vague / ambiguous requests
+        else:
+            # Handle vague / ambiguous input
+            if any(word in msg for word in ["afternoon", "evening", "morning", "soon", "asap", "office hours"]):
+                tz = pytz.timezone('Asia/Kolkata')
+                now = datetime.datetime.now(tz)
+                # Default to next slot in guessed period
                 if "afternoon" in msg:
-                    tentative = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).replace(hour=15, minute=0)
+                    tentative = now.replace(hour=15, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
                 elif "morning" in msg:
-                    tentative = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).replace(hour=10, minute=0)
+                    tentative = now.replace(hour=10, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
                 elif "evening" in msg:
-                    tentative = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).replace(hour=18, minute=0)
+                    tentative = now.replace(hour=18, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
                 else:
-                    tentative = None
+                    tentative = now + datetime.timedelta(hours=1)
 
-                if tentative:
-                    tentative = tentative + datetime.timedelta(days=1)
-                    end = tentative + datetime.timedelta(minutes=30)
-                    free, _ = check_availability(tentative, end)
-                    if free:
-                        link = create_event(summary, tentative, end)
-                        reply = f"✅ Booked {summary} for {tentative.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
-                    else:
-                        reply = f"❌ You're busy at that time. Suggest another slot?"
+                end = tentative + datetime.timedelta(minutes=30)
+                free, _ = check_availability(tentative, end)
+                if free:
+                    link = create_event(summary, tentative, end)
+                    reply = f"✅ Booked {summary} for {tentative.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
                 else:
-                    reply = "⚠ Could you please specify a clearer time? (e.g., 'tomorrow 4 PM', 'next Monday 10 AM')"
+                    reply = "❌ You're busy at the guessed time. Please provide a specific time."
+            else:
+                reply = "⚠ I couldn’t understand your time request. Please specify a proper date and time (e.g., 'tomorrow at 3 PM')."
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
 
