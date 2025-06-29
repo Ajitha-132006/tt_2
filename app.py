@@ -1,132 +1,119 @@
+import json
 import streamlit as st
-import threading
-from fastapi import FastAPI, Request
-import uvicorn
-from langgraph.graph import Graph
-from langgraph.prebuilt import create_react_agent, ToolExecutor
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
-from datetime import datetime, timedelta
+import datetime
+from dateparser.search import search_dates
 import pytz
-import re
 
-# ---- GOOGLE CALENDAR SETUP ----
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-SERVICE_ACCOUNT_INFO = st.secrets["SERVICE_ACCOUNT_JSON"]
+
+service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
 credentials = service_account.Credentials.from_service_account_info(
-    SERVICE_ACCOUNT_INFO, scopes=SCOPES
-)
-calendar_service = build('calendar', 'v3', credentials=credentials)
+    service_account_info, scopes=SCOPES)
 
-calendar_id = 'primary'
+service = build('calendar', 'v3', credentials=credentials)
 
-# ---- FASTAPI SETUP ----
-app = FastAPI()
+CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Or the specific calendar ID your service account has access to
 
-@app.post("/chat")
-async def chat_api(req: Request):
-    data = await req.json()
-    user_message = data.get("message", "")
-    response = handle_chat(user_message)
-    return {"reply": response}
-
-def start_fastapi():
-    uvicorn.run(app, host="127.0.0.1", port=8000)
-
-threading.Thread(target=start_fastapi, daemon=True).start()
-
-# ---- LANGGRAPH AGENT SETUP ----
-def search_slots(start_time, end_time):
-    events_result = calendar_service.events().list(
-        calendarId=calendar_id,
-        timeMin=start_time.isoformat(),
-        timeMax=end_time.isoformat(),
+def check_availability(start, end):
+    events_result = service.events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
         singleEvents=True,
         orderBy='startTime'
     ).execute()
     events = events_result.get('items', [])
-    return events
+    return len(events) == 0
 
-def suggest_slot():
-    now = datetime.utcnow().isoformat() + 'Z'
-    later = (datetime.utcnow() + timedelta(days=7)).isoformat() + 'Z'
-    events = search_slots(datetime.utcnow(), datetime.utcnow() + timedelta(days=7))
-    
-    busy_times = []
-    for event in events:
-        start = event['start'].get('dateTime')
-        end = event['end'].get('dateTime')
-        if start and end:
-            busy_times.append((start, end))
-    
-    # Naive suggestion: suggest tomorrow at 3 PM UTC
-    tomorrow = datetime.utcnow() + timedelta(days=1)
-    suggested = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 15, 0, 0, tzinfo=pytz.UTC)
-    return suggested.isoformat()
-
-def create_event(start_time, end_time, summary="Meeting"):
+def create_event(summary, start, end):
     event = {
         'summary': summary,
-        'start': {'dateTime': start_time, 'timeZone': 'UTC'},
-        'end': {'dateTime': end_time, 'timeZone': 'UTC'}
+        'start': {'dateTime': start.isoformat(), 'timeZone': 'Asia/Kolkata'},
+        'end': {'dateTime': end.isoformat(), 'timeZone': 'Asia/Kolkata'}
     }
-    created_event = calendar_service.events().insert(calendarId=calendar_id, body=event).execute()
+    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
     return created_event.get('htmlLink')
 
-def parse_time_input(text):
-    # Simplified regex time extraction
-    if "tomorrow" in text:
-        start = datetime.utcnow() + timedelta(days=1, hours=15)
-        end = start + timedelta(hours=1)
-    elif "next week" in text:
-        start = datetime.utcnow() + timedelta(days=7, hours=15)
-        end = start + timedelta(hours=1)
-    elif "friday" in text:
-        today = datetime.utcnow()
-        days_ahead = (4 - today.weekday()) % 7
-        if days_ahead == 0:
-            days_ahead = 7
-        start = today + timedelta(days=days_ahead, hours=15)
-        end = start + timedelta(hours=1)
-    else:
-        start = datetime.utcnow() + timedelta(days=1, hours=15)
-        end = start + timedelta(hours=1)
-    return start, end
+# Streamlit chat interface
+st.title("📅 Calendar Booking Chatbot")
 
-def handle_chat(user_input):
-    if re.search(r'book|schedule|meeting|appointment', user_input, re.I):
-        start, end = parse_time_input(user_input)
-        existing = search_slots(start, end)
-        if existing:
-            suggestion = suggest_slot()
-            return f"You're busy at that time. How about {suggestion}?"
-        else:
-            link = create_event(start.isoformat(), end.isoformat())
-            return f"Meeting booked! Here is the link: {link}"
-    elif re.search(r'free|available|slot', user_input, re.I):
-        suggestion = suggest_slot()
-        return f"You're free at {suggestion}. Shall I book it?"
-    else:
-        return "Can you please specify a date or time for the appointment?"
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# ---- STREAMLIT CHAT UI ----
-st.title("📅 AI Appointment Booking Assistant")
+user_input = st.chat_input("Ask me to book your meeting...")
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-user_input = st.chat_input("Type your appointment request...")
+pending_suggestion = st.session_state.get("pending_suggestion", {})
 
 if user_input:
-    st.session_state.chat_history.append(("user", user_input))
-    response = handle_chat(user_input)
-    st.session_state.chat_history.append(("ai", response))
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    reply = ""
 
-for role, msg in st.session_state.chat_history:
-    if role == "user":
-        st.chat_message("user").write(msg)
+    msg = user_input.strip().lower()
+
+    if msg in ["yes", "ok", "sure"] and "time" in pending_suggestion:
+        start_local = pending_suggestion["time"]
+        end_local = start_local + datetime.timedelta(minutes=30)
+        summary = pending_suggestion.get("summary", "Scheduled Event")
+        link = create_event(summary, start_local, end_local)
+        reply = f"✅ Booked {summary} for {start_local.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
+        pending_suggestion = {}
+
+    elif msg in ["no", "reject"]:
+        reply = "❌ Okay, please suggest a different time."
+        pending_suggestion = {}
+
     else:
-        st.chat_message("assistant").write(msg)
+        # Determine event summary
+        if "flight" in msg:
+            summary = "Flight"
+        elif "call" in msg:
+            summary = "Call"
+        elif "meeting" in msg:
+            summary = "Meeting"
+        else:
+            summary = "Scheduled Event"
+
+        result = search_dates(
+            msg,
+            settings={
+                'PREFER_DATES_FROM': 'future',
+                'RETURN_AS_TIMEZONE_AWARE': True,
+                'TIMEZONE': 'Asia/Kolkata',
+                'RELATIVE_BASE': datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
+            }
+        )
+
+        if not result:
+            reply = "⚠ I couldn’t understand the date/time. Try saying 'tomorrow 4 PM' or 'next Friday 10 AM'."
+        else:
+            parsed = result[0][1]
+            if parsed.tzinfo is None:
+                parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
+
+            end_local = parsed + datetime.timedelta(minutes=30)
+
+            if check_availability(parsed, end_local):
+                link = create_event(summary, parsed, end_local)
+                reply = f"✅ Booked {summary} for {parsed.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
+            else:
+                # Suggest next 3 slots
+                for i in range(1, 4):
+                    alt_start = parsed + datetime.timedelta(hours=i)
+                    alt_end = alt_start + datetime.timedelta(minutes=30)
+                    if check_availability(alt_start, alt_end):
+                        reply = f"❌ Busy at requested time. How about {alt_start.strftime('%Y-%m-%d %I:%M %p')}?"
+                        pending_suggestion = {"time": alt_start, "summary": summary}
+                        break
+                else:
+                    reply = "❌ Busy at requested time and no nearby slots found. Please suggest another time."
+
+    st.session_state["pending_suggestion"] = pending_suggestion
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+for m in st.session_state.messages:
+    if m["role"] == "user":
+        st.chat_message("user").write(m["content"])
+    else:
+        st.chat_message("assistant").write(m["content"])
