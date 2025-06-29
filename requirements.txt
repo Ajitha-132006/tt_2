@@ -11,4 +11,4 @@ langchain_community
 parsedatetime
 fastapi
 uvicorn
-langgraph.graph
+langgraph
