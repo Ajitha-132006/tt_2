@@ -1,30 +1,31 @@
-import json
 import streamlit as st
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import datetime
-from dateparser.search import search_dates
 import pytz
+import dateparser
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import AIMessage, HumanMessage
 
+# ---- SETUP ----
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+service_account_info = dict(st.secrets["SERVICE_ACCOUNT_JSON"])
+credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+calendar_service = build('calendar', 'v3', credentials=credentials)
+CALENDAR_ID = 'primary'
 
-service_account_info = st.secrets["SERVICE_ACCOUNT_JSON"]
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES)
+gemini = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=st.secrets["GEMINI_API_KEY"])
 
-service = build('calendar', 'v3', credentials=credentials)
+tz = pytz.timezone('Asia/Kolkata')
 
-CALENDAR_ID = 'chalasaniajitha@gmail.com'  # Or the specific calendar ID your service account has access to
-
-def check_availability(start, end):
-    events_result = service.events().list(
+# ---- FUNCTIONS ----
+def is_free(start, end):
+    events = calendar_service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=start.isoformat(),
         timeMax=end.isoformat(),
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
-    events = events_result.get('items', [])
+        singleEvents=True
+    ).execute().get('items', [])
     return len(events) == 0
 
 def create_event(summary, start, end):
@@ -33,86 +34,68 @@ def create_event(summary, start, end):
         'start': {'dateTime': start.isoformat(), 'timeZone': 'Asia/Kolkata'},
         'end': {'dateTime': end.isoformat(), 'timeZone': 'Asia/Kolkata'}
     }
-    created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-    return created_event.get('htmlLink')
+    created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    return created.get('htmlLink')
 
-# Streamlit chat interface
-st.title("📅 Calendar Booking Chatbot")
+def find_next_free_slots(start, duration, count=3):
+    slots = []
+    current = start
+    while len(slots) < count:
+        end = current + duration
+        if is_free(current, end):
+            slots.append(current)
+        current += datetime.timedelta(minutes=30)
+    return slots
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+def gemini_understand_intent(chat_history):
+    messages = [HumanMessage(m["content"]) if m["role"] == "user" else AIMessage(m["content"]) for m in chat_history]
+    response = gemini.invoke(messages + [HumanMessage("Extract intent, date, time, duration and purpose clearly in JSON.")])
+    return response.content
 
-user_input = st.chat_input("Ask me to book your meeting...")
+# ---- STREAMLIT ----
+st.title("📅 AI Calendar Booking Agent")
 
-pending_suggestion = st.session_state.get("pending_suggestion", {})
+if "chat" not in st.session_state:
+    st.session_state.chat = []
+
+user_input = st.chat_input("Ask to book, check, or suggest...")
 
 if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.session_state.chat.append({"role": "user", "content": user_input})
     reply = ""
 
-    msg = user_input.strip().lower()
+    # 1️⃣ Ask Gemini to understand intent
+    gemini_reply = gemini_understand_intent(st.session_state.chat)
 
-    if msg in ["yes", "ok", "sure"] and "time" in pending_suggestion:
-        start_local = pending_suggestion["time"]
-        end_local = start_local + datetime.timedelta(minutes=30)
-        summary = pending_suggestion.get("summary", "Scheduled Event")
-        link = create_event(summary, start_local, end_local)
-        reply = f"✅ Booked {summary} for {start_local.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
-        pending_suggestion = {}
+    # 2️⃣ Try to parse date/time
+    try:
+        data = eval(gemini_reply) if isinstance(gemini_reply, str) else gemini_reply
+        time_str = data.get("time", "")
+        summary = data.get("purpose", "Meeting")
+        duration_mins = int(data.get("duration_mins", 30))
 
-    elif msg in ["no", "reject"]:
-        reply = "❌ Okay, please suggest a different time."
-        pending_suggestion = {}
-
-    else:
-        # Determine event summary
-        if "flight" in msg:
-            summary = "Flight"
-        elif "call" in msg:
-            summary = "Call"
-        elif "meeting" in msg:
-            summary = "Meeting"
-        else:
-            summary = "Scheduled Event"
-
-        result = search_dates(
-            msg,
-            settings={
-                'PREFER_DATES_FROM': 'future',
-                'RETURN_AS_TIMEZONE_AWARE': True,
-                'TIMEZONE': 'Asia/Kolkata',
-                'RELATIVE_BASE': datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-            }
-        )
-
-        if not result:
-            reply = "⚠ I couldn’t understand the date/time. Try saying 'tomorrow 4 PM' or 'next Friday 10 AM'."
-        else:
-            parsed = result[0][1]
-            if parsed.tzinfo is None:
-                parsed = pytz.timezone('Asia/Kolkata').localize(parsed)
-
-            end_local = parsed + datetime.timedelta(minutes=30)
-
-            if check_availability(parsed, end_local):
-                link = create_event(summary, parsed, end_local)
-                reply = f"✅ Booked {summary} for {parsed.strftime('%Y-%m-%d %I:%M %p')}. [View in Calendar]({link})"
+        parsed_dt = dateparser.parse(time_str, settings={'TIMEZONE': 'Asia/Kolkata', 'RETURN_AS_TIMEZONE_AWARE': True})
+        if parsed_dt:
+            end_dt = parsed_dt + datetime.timedelta(minutes=duration_mins)
+            if is_free(parsed_dt, end_dt):
+                link = create_event(summary, parsed_dt, end_dt)
+                reply = f"✅ Booked *{summary}* for {parsed_dt.strftime('%Y-%m-%d %I:%M %p')}. [View event]({link})"
             else:
-                # Suggest next 3 slots
-                for i in range(1, 4):
-                    alt_start = parsed + datetime.timedelta(hours=i)
-                    alt_end = alt_start + datetime.timedelta(minutes=30)
-                    if check_availability(alt_start, alt_end):
-                        reply = f"❌ Busy at requested time. How about {alt_start.strftime('%Y-%m-%d %I:%M %p')}?"
-                        pending_suggestion = {"time": alt_start, "summary": summary}
-                        break
+                slots = find_next_free_slots(parsed_dt, datetime.timedelta(minutes=duration_mins))
+                if slots:
+                    slot_list = "\n".join([f"- {s.strftime('%Y-%m-%d %I:%M %p')}" for s in slots])
+                    reply = f"❌ You're busy at requested time. Here are some alternatives:\n{slot_list}\nShall I book one?"
                 else:
-                    reply = "❌ Busy at requested time and no nearby slots found. Please suggest another time."
+                    reply = "❌ No suitable free slots found nearby. Please suggest another time."
+        else:
+            reply = "⚠ I couldn’t parse a valid date/time. Please rephrase."
 
-    st.session_state["pending_suggestion"] = pending_suggestion
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    except Exception as e:
+        reply = f"⚠ I couldn’t understand. Please try rephrasing. (Debug: {e})"
 
-for m in st.session_state.messages:
+    st.session_state.chat.append({"role": "assistant", "content": reply})
+
+for m in st.session_state.chat:
     if m["role"] == "user":
         st.chat_message("user").write(m["content"])
     else:
