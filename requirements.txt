@@ -10,3 +10,4 @@ langchain
 langchain_community
 parsedatetime
 fastapi
+uvicorn
