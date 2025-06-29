@@ -12,3 +12,4 @@ parsedatetime
 fastapi
 uvicorn
 langgraph
+langchain_google_genai
